@@ -1,0 +1,1685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marginalia — Read & Annotate</title>
+<meta name="description" content="Read PDFs and videos side-by-side with a pressure-sensitive notebook.">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mozilla/readability@0.5.0/Readability.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<style>
+:root{
+  --bg-primary:#0b0b12; --bg-surface:#131320; --bg-elevated:#1b1b2e; --bg-hover:#24243a;
+  --bg-page:#0a0a10; --accent:#7b68ee; --accent-light:#9585f5; --accent-dim:rgba(123,104,238,.12);
+  --text-primary:#e4e2ee; --text-secondary:#8b899e; --text-muted:#565471;
+  --border:#272740; --border-light:#33334d; --green:#4ade80; --yellow:#fbbf24; --red:#f87171;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:var(--bg-primary);color:var(--text-primary);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-light)}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:52px;background:rgba(19,19,32,.9);backdrop-filter:blur(24px);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;gap:10px}
+.header-left,.header-right{display:flex;align-items:center;gap:8px;min-width:0}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;flex-shrink:0}
+.logo-icon{width:30px;height:30px;background:linear-gradient(135deg,var(--accent),#a78bfa);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff}
+.divider-v{width:1px;height:24px;background:var(--border);flex-shrink:0}
+.file-name{font-size:13px;color:var(--text-secondary);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;border-radius:5px;padding:3px 6px}
+.file-name:hover{background:var(--bg-hover);color:var(--text-primary)}
+.file-name-input{font-size:13px;font-family:inherit;color:var(--text-primary);background:var(--bg-elevated);border:1px solid var(--accent);border-radius:5px;padding:3px 6px;max-width:260px;outline:none}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-primary);border-radius:8px;font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:all .18s;white-space:nowrap}
+.btn:hover{background:var(--bg-hover);border-color:var(--border-light)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn:disabled:hover{background:var(--bg-elevated);border-color:var(--border)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 2px 12px rgba(123,104,238,.25)}
+.btn-primary:hover{background:var(--accent-light);border-color:var(--accent-light)}
+.btn-icon{padding:6px 9px;min-width:34px;justify-content:center}
+
+/* Main */
+.main{flex:1;display:flex;overflow:hidden}
+.source-pane{flex:1;display:flex;flex-direction:column;min-width:260px;background:var(--bg-primary);position:relative}
+.source-toolbar{display:none;align-items:center;justify-content:center;gap:6px;padding:7px 16px;background:var(--bg-surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.source-toolbar.show{display:flex}
+.source-toolbar .btn-icon{width:30px;height:30px;padding:0;font-size:15px;color:var(--text-secondary);border:none;background:transparent}
+.source-toolbar .btn-icon:hover{background:var(--bg-hover);color:var(--text-primary)}
+.page-nav{display:flex;align-items:center;gap:4px}
+.page-input{width:48px;padding:4px 6px;text-align:center;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none}
+.page-total{font-size:12px;color:var(--text-muted);font-family:'JetBrains Mono',monospace}
+.zoom-info{font-size:11px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;min-width:42px;text-align:center;user-select:none}
+.toolbar-sep{width:1px;height:18px;background:var(--border);margin:0 4px}
+
+.pdf-container{flex:1;overflow:auto;display:none;flex-direction:column;align-items:center;padding:20px;gap:12px;background:var(--bg-page)}
+.pdf-container.show{display:flex}
+.pdf-page-wrapper{background:#fff;box-shadow:0 2px 20px rgba(0,0,0,.5);border-radius:3px;overflow:hidden;flex-shrink:0;position:relative;display:flex;align-items:center;justify-content:center}
+.pdf-page-wrapper canvas{display:block}
+.page-loading{width:24px;height:24px;border-radius:50%;border:2px solid rgba(123,104,238,.25);border-top-color:var(--accent);animation:spin .8s linear infinite;margin:40px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px;gap:18px;overflow:auto}
+.drop-zone{width:100%;max-width:420px;padding:40px;border:2px dashed var(--border);border-radius:18px;text-align:center;cursor:pointer;background:rgba(123,104,238,.02);transition:.2s}
+.drop-zone:hover{border-color:var(--accent);background:var(--accent-dim)}
+.drop-zone.dragover{border-color:var(--accent);background:var(--accent-dim)}
+.drop-title{font-size:17px;font-weight:600;margin-bottom:6px}
+.drop-subtitle{font-size:13px;color:var(--text-secondary)}
+.drop-error{font-size:12px;color:var(--red);margin-top:6px;min-height:14px}
+.source-divider{display:flex;align-items:center;width:100%;max-width:420px;color:var(--text-muted);font-size:12px}
+.source-divider::before,.source-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+.source-divider span{padding:0 12px}
+.yt-entry{width:100%;max-width:420px;padding:22px 26px;border:1px solid var(--border);border-radius:14px;text-align:center;background:rgba(255,255,255,.015)}
+.yt-input-row{display:flex;gap:8px;margin-top:12px}
+.yt-url-input{flex:1;padding:9px 12px;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);border-radius:8px;font-family:inherit;font-size:13px;outline:none}
+.yt-url-input:focus{border-color:var(--accent)}
+
+.media-container{flex:1;display:none;align-items:center;justify-content:center;padding:20px;background:var(--bg-page)}
+.media-container.show{display:flex}
+.yt-frame-stack{width:100%;max-width:1000px;display:flex;flex-direction:column;gap:10px}
+.yt-frame-wrap{width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden;box-shadow:0 2px 20px rgba(0,0,0,.5)}
+.yt-frame-wrap iframe{width:100%;height:100%;border:none}
+.yt-note{font-size:12px;color:var(--text-muted);text-align:center;line-height:1.5}
+.yt-filewarn{margin-top:12px;font-size:12px;line-height:1.6;color:var(--yellow);background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:10px 12px;text-align:left}
+.yt-filewarn code{font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;color:var(--text-primary)}
+.yt-note a{color:var(--accent-light);text-decoration:underline}
+#localVideo{width:100%;max-width:1000px;max-height:100%;background:#000;border-radius:8px;box-shadow:0 2px 20px rgba(0,0,0,.5)}
+
+/* Resizer */
+.resizer{width:6px;cursor:col-resize;background:var(--border);flex-shrink:0;transition:background .2s;z-index:10}
+.resizer:hover,.resizer.active{background:var(--accent)}
+
+/* Notes pane */
+.notes-pane{width:46%;min-width:340px;display:flex;flex-direction:column;background:var(--bg-surface)}
+.notes-toolbar{display:flex;align-items:center;gap:3px;padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.tb{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;background:transparent;color:var(--text-secondary);border-radius:7px;cursor:pointer;font-size:15px;transition:all .15s;position:relative}
+.tb:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tb.active{background:var(--accent-dim);color:var(--accent-light);border-color:var(--accent)}
+.tb:active{transform:scale(.92)}
+.tb:disabled{opacity:.35;cursor:not-allowed}
+.color-picker{width:28px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent}
+.color-picker::-webkit-color-swatch-wrapper{padding:2px}
+.color-picker::-webkit-color-swatch{border:none;border-radius:4px}
+.swatches{display:flex;gap:4px;align-items:center}
+.swatch{width:20px;height:20px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.15s}
+.swatch:hover{transform:scale(1.15)}
+.swatch.active{border-color:var(--text-primary);box-shadow:0 0 0 2px var(--bg-surface),0 0 0 3px var(--text-primary)}
+.size-control{display:flex;align-items:center;border:1px solid var(--border);border-radius:7px;background:var(--bg-surface);overflow:hidden;height:28px}
+.size-btn{background:transparent;border:none;color:var(--text-secondary);width:24px;height:100%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;outline:none}
+.size-btn:hover{background:rgba(255,255,255,.08);color:var(--text-primary)}
+.size-label{font-size:12px;color:var(--text-primary);min-width:26px;text-align:center;font-family:'JetBrains Mono',monospace}
+.style-picker{background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:7px;padding:5px 7px;font-size:12px;outline:none;cursor:pointer;font-family:'Inter',sans-serif}
+.style-picker:hover{border-color:var(--border-light);color:var(--text-primary)}
+.shape-menu{position:absolute;top:40px;left:0;background:var(--bg-elevated);border:1px solid var(--border-light);border-radius:9px;padding:5px;display:none;gap:3px;z-index:50;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+.shape-menu.show{display:grid;grid-template-columns:repeat(4,1fr)}
+
+.canvas-wrap{flex:1;overflow:hidden;position:relative;background:var(--bg-primary);touch-action:none}
+#staticCanvas{position:absolute;top:0;left:0;display:block;pointer-events:none}
+#drawCanvas{position:absolute;top:0;left:0;display:block;touch-action:none}
+.canvas-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:var(--text-muted);font-size:14px;z-index:1;opacity:.6}
+.text-editor{position:absolute;z-index:20;background:rgba(255,255,255,.06);border:1px dashed var(--accent);border-radius:4px;outline:none;resize:none;overflow:hidden;font-family:'Inter',sans-serif;line-height:1.3;padding:2px 4px;color:inherit;white-space:pre;min-width:40px}
+
+.notes-footer{display:flex;align-items:center;gap:6px;padding:7px 12px;border-top:1px solid var(--border);flex-shrink:0}
+.page-indicator{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--accent-light);background:var(--accent-dim);padding:3px 10px;border-radius:5px;white-space:nowrap}
+.footer-spacer{flex:1}
+.zoom-group{display:flex;align-items:center;gap:3px}
+
+/* Toast */
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(80px);padding:11px 22px;background:var(--bg-elevated);border:1px solid var(--border-light);border-radius:10px;font-size:13px;color:var(--text-primary);box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:10000;transition:transform .35s,opacity .3s;opacity:0;pointer-events:none}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.toast.error{border-color:var(--red)}
+.toast.ok{border-color:var(--green)}
+.hint{font-size:11px;color:var(--text-muted);margin-left:2px}
+
+/* Save status pill */
+.save-status{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text-muted);padding:2px 9px;border-radius:10px;background:var(--bg-elevated);white-space:nowrap}
+.save-status.saving{color:var(--yellow)}
+.save-status.saved{color:var(--green)}
+.save-status.err{color:var(--red)}
+
+/* Boards panel */
+.boards-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:900;opacity:0;pointer-events:none;transition:opacity .25s}
+.boards-overlay.open{opacity:1;pointer-events:auto}
+.boards-panel{position:fixed;top:0;right:0;height:100vh;width:360px;max-width:90vw;background:var(--bg-surface);border-left:1px solid var(--border);z-index:901;transform:translateX(100%);transition:transform .28s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,.4)}
+.boards-panel.open{transform:translateX(0)}
+.boards-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 12px;font-size:18px;font-weight:700}
+.boards-actions{display:flex;flex-direction:column;gap:8px;padding:0 20px 12px;border-bottom:1px solid var(--border)}
+.boards-actions .btn{width:100%;justify-content:center;padding:10px}
+.boards-list{flex:1;overflow-y:auto;padding:10px 14px}
+.board-item{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;cursor:pointer;transition:background .15s;border:1px solid transparent}
+.board-item:hover{background:var(--bg-hover)}
+.board-item.active{background:var(--accent-dim);border-color:var(--accent)}
+.board-ico{width:34px;height:34px;flex-shrink:0;border-radius:8px;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--text-secondary)}
+.board-meta{flex:1;min-width:0}
+.board-name{font-size:14px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.board-sub{font-size:11px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;margin-top:2px}
+.board-del{opacity:0;flex-shrink:0;width:30px;height:30px;border:none;background:transparent;color:var(--text-muted);border-radius:7px;cursor:pointer;font-size:15px;transition:.15s}
+.board-item:hover .board-del{opacity:1}
+.board-del:hover{background:rgba(248,113,113,.15);color:var(--red)}
+.boards-foot{padding:14px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text-secondary);line-height:1.5}
+.boards-foot code{font-family:'JetBrains Mono',monospace;color:var(--text-muted)}
+.boards-empty{text-align:center;color:var(--text-muted);font-size:13px;padding:40px 20px}
+
+/* Website viewer */
+.web-container{flex:1;display:none;flex-direction:column;min-height:0;background:var(--bg-page)}
+.web-container.show{display:flex}
+.web-toolbar{display:flex;align-items:center;gap:6px;padding:7px 12px;background:var(--bg-surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.web-toolbar .btn-icon{padding:5px 8px;min-width:32px;font-size:12px;text-decoration:none}
+.seg{display:flex;background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:2px}
+.seg-btn{border:none;background:transparent;color:var(--text-secondary);font-family:inherit;font-size:12px;font-weight:600;padding:5px 11px;border-radius:6px;cursor:pointer}
+.seg-btn.active{background:var(--accent);color:#fff}
+.web-url{flex:1;min-width:0;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.web-reader{flex:1;overflow:auto;padding:24px 16px}
+.web-live{flex:1;display:none;flex-direction:column;min-height:0}
+.web-live iframe{flex:1;border:none;background:#fff;width:100%}
+.desktop .web-live-note,.desktop #ytFileWarn{display:none!important}
+.web-live-note{font-size:11px;color:var(--text-muted);text-align:center;padding:6px 10px;border-top:1px solid var(--border)}
+.web-container.live .web-reader{display:none}
+.web-container.live .web-live{display:flex}
+.web-container.live #webFontDown,.web-container.live #webFontUp{display:none}
+.web-article{--rs:18px;max-width:720px;margin:0 auto;background:#fbfaf7;color:#22211f;border-radius:6px;box-shadow:0 2px 20px rgba(0,0,0,.45);padding:44px 52px 60px;font-family:Georgia,'Iowan Old Style','Times New Roman',serif;font-size:var(--rs);line-height:1.7;overflow-wrap:break-word}
+.web-article .wa-site{font-family:'Inter',sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#8a7f6e;margin-bottom:10px}
+.web-article h1.wa-title{font-family:'Inter',sans-serif;font-size:1.75em;line-height:1.25;margin:0 0 10px;color:#111}
+.web-article .wa-byline{font-family:'Inter',sans-serif;font-size:13px;color:#6b665e;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid #e6e1d8}
+.web-article p,.web-article ul,.web-article ol,.web-article blockquote,.web-article pre,.web-article figure,.web-article table{margin:0 0 1.05em}
+.web-article h2,.web-article h3,.web-article h4{font-family:'Inter',sans-serif;line-height:1.3;margin:1.6em 0 .6em;color:#111}
+.web-article h2{font-size:1.35em}.web-article h3{font-size:1.15em}
+.web-article ul,.web-article ol{padding-left:1.4em}
+.web-article li{margin:.25em 0}
+.web-article a{color:#4a3fc2}
+.web-article img,.web-article video{max-width:100%;height:auto;border-radius:4px;display:block;margin:1.2em auto}
+.web-article figcaption{font-size:.8em;color:#7a746a;text-align:center;margin-top:-.6em}
+.web-article blockquote{border-left:3px solid #c9c1b3;padding-left:1em;color:#4d4943;font-style:italic}
+.web-article pre{background:#f0ede6;padding:12px 14px;border-radius:6px;overflow:auto;font-size:.8em;line-height:1.5}
+.web-article code{font-family:'JetBrains Mono',monospace;font-size:.85em;background:#f0ede6;padding:1px 4px;border-radius:3px}
+.web-article pre code{background:none;padding:0}
+.web-article table{border-collapse:collapse;display:block;overflow-x:auto;font-size:.85em}
+.web-article th,.web-article td{border:1px solid #e0dacf;padding:6px 9px}
+.web-article hr{border:none;border-top:1px solid #e6e1d8;margin:2em 0}
+.web-msg{max-width:560px;margin:60px auto;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.6}
+.web-msg b{color:var(--text-primary)}
+.web-spin{width:26px;height:26px;border-radius:50%;border:2px solid rgba(123,104,238,.25);border-top-color:var(--accent);animation:spin .8s linear infinite;margin:0 auto 14px}
+@media(max-width:700px){.web-article{padding:28px 22px 40px}}
+
+/* Shortcuts modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:950;display:none;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg-surface);border:1px solid var(--border-light);border-radius:14px;width:560px;max-width:92vw;max-height:85vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);font-size:16px;font-weight:700;position:sticky;top:0;background:var(--bg-surface)}
+.modal-body{padding:8px 20px 20px;display:grid;grid-template-columns:1fr 1fr;gap:8px 28px}
+.sc-group{margin-top:14px;break-inside:avoid}
+.sc-group h4{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-secondary);margin-bottom:6px}
+.sc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04)}
+.sc-row .k{display:flex;gap:4px;align-items:center;flex-shrink:0}
+kbd{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--bg-elevated);border:1px solid var(--border-light);border-bottom-width:2px;border-radius:5px;padding:2px 7px;color:var(--text-primary);white-space:nowrap}
+@media(max-width:520px){.modal-body{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<input type="file" id="pdfInput" accept=".pdf,application/pdf" hidden>
+<input type="file" id="videoInput" accept="video/*" hidden>
+<input type="file" id="loadInput" accept=".json,.marginalia,application/json" hidden>
+
+<header class="header">
+  <div class="header-left">
+    <button class="btn btn-icon" id="boardsBtn" title="My boards">☰</button>
+    <div class="logo"><div class="logo-icon">✦</div><span>Marginalia</span></div>
+    <span class="divider-v"></span>
+    <span id="fileName" class="file-name" title="Click to rename this board">Untitled board</span>
+    <input type="text" id="fileNameInput" class="file-name-input" hidden>
+    <span class="save-status" id="saveStatus" title="Autosaved to this browser">Saved</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-primary" id="openPdfBtn">Open PDF</button>
+    <button class="btn" id="openVideoBtn">Open Video</button>
+    <button class="btn" id="openYtBtn">+ YouTube</button>
+    <button class="btn" id="openWebBtn">+ Website</button>
+    <span class="divider-v"></span>
+    <button class="btn btn-icon" id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶</button>
+    <button class="btn btn-icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
+    <span class="divider-v"></span>
+    <button class="btn" id="saveBtn" title="Save notes to a file">Save</button>
+    <button class="btn" id="loadBtn" title="Load notes from a file">Load</button>
+    <button class="btn" id="exportBtn" title="Export notes to PDF">Export PDF</button>
+    <button class="btn btn-icon" id="helpBtn" title="Keyboard shortcuts (?)">⌨</button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="source-pane" id="sourcePane">
+    <div class="source-toolbar" id="pdfToolbar">
+      <button class="btn btn-icon" id="zoomOutBtn">−</button>
+      <span class="zoom-info" id="pdfZoomInfo">100%</span>
+      <button class="btn btn-icon" id="zoomInBtn">+</button>
+      <button class="btn btn-icon" id="fitWidthBtn" title="Fit width">⇔</button>
+      <span class="toolbar-sep"></span>
+      <div class="page-nav">
+        <button class="btn btn-icon" id="pdfPrevBtn">◀</button>
+        <input type="number" class="page-input" id="pdfPageInput" value="1" min="1">
+        <span class="page-total">/ <span id="pdfTotalPages">0</span></span>
+        <button class="btn btn-icon" id="pdfNextBtn">▶</button>
+      </div>
+    </div>
+
+    <div class="empty-state" id="emptyState">
+      <div class="drop-zone" id="pdfDrop">
+        <div class="drop-title">Open a PDF</div>
+        <div class="drop-subtitle">Click, or drag &amp; drop a PDF here</div>
+        <div class="drop-error" id="pdfError"></div>
+      </div>
+      <div class="source-divider"><span>or</span></div>
+      <div class="drop-zone" id="videoDrop">
+        <div class="drop-title">Open a video file</div>
+        <div class="drop-subtitle">Click, or drag &amp; drop a video here</div>
+        <div class="drop-error" id="videoError"></div>
+      </div>
+      <div class="source-divider"><span>or</span></div>
+      <div class="yt-entry">
+        <div class="drop-title" style="font-size:15px">Paste a YouTube link</div>
+        <div class="yt-input-row">
+          <input type="text" id="ytUrlInput" class="yt-url-input" placeholder="https://youtube.com/watch?v=...">
+          <button class="btn btn-primary" id="ytLoadBtn">Load</button>
+        </div>
+        <div class="drop-error" id="ytError"></div>
+        <div class="yt-filewarn" id="ytFileWarn" hidden>⚠ <b>YouTube needs a local server.</b> You've opened Marginalia by double-clicking the file, and YouTube blocks its player on <code>file://</code> pages (Error 153). Double-click <b>Start&nbsp;Marginalia.bat</b> in this folder, or run <code>python -m http.server 8000</code> here and open <b>http://localhost:8000/Marginalia.html</b>. PDFs and local videos work fine either way.</div>
+      </div>
+      <div class="source-divider"><span>or</span></div>
+      <div class="yt-entry">
+        <div class="drop-title" style="font-size:15px">Open a website or blog post</div>
+        <div class="yt-input-row">
+          <input type="text" id="webUrlInput" class="yt-url-input" placeholder="https://example.com/blog/post">
+          <button class="btn btn-primary" id="webLoadBtn">Open</button>
+        </div>
+        <div class="drop-error" id="webError"></div>
+      </div>
+    </div>
+
+    <div class="pdf-container" id="pdfContainer"></div>
+
+    <div class="media-container" id="ytContainer">
+      <div class="yt-frame-stack">
+        <div class="yt-frame-wrap"><iframe id="ytFrame" src="" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share" allowfullscreen></iframe></div>
+        <div class="yt-note">Video not loading? Some setups block YouTube's embed. <a id="ytFallback" href="#" target="_blank" rel="noopener">Open on YouTube</a> — keep this tab open to sketch alongside.</div>
+      </div>
+    </div>
+
+    <div class="media-container" id="videoContainer"><video id="localVideo" controls></video></div>
+
+    <div class="web-container" id="webContainer">
+      <div class="web-toolbar">
+        <div class="seg" role="tablist">
+          <button class="seg-btn active" id="webModeReader" title="Clean article text">Reader</button>
+          <button class="seg-btn" id="webModeLive" title="The real website">Live</button>
+        </div>
+        <span class="web-url" id="webUrlLabel"></span>
+        <button class="btn btn-icon" id="webFontDown" title="Smaller text">A−</button>
+        <button class="btn btn-icon" id="webFontUp" title="Larger text">A+</button>
+        <button class="btn btn-icon" id="webReload" title="Reload">⟳</button>
+        <a class="btn btn-icon" id="webOriginal" href="#" target="_blank" rel="noopener" title="Open the original page in a new tab">↗</a>
+      </div>
+      <div class="web-reader" id="webReader"><div class="web-article" id="webArticle"></div></div>
+      <div class="web-live" id="webLive">
+        <iframe id="webFrame" src="about:blank" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"></iframe>
+        <div class="web-live-note">Blank page? Many sites (Medium, news sites…) refuse to be shown inside other apps. Use <b>Reader</b>, or open the original with ↗.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="resizer" id="resizer"></div>
+
+  <div class="notes-pane" id="notesPane">
+    <div class="notes-toolbar">
+      <button class="tb active" id="tool-select" data-tool="select" title="Select / Move (V)">⤢</button>
+      <button class="tb" id="tool-lasso" data-tool="lasso" title="Lasso select (L)">◌</button>
+      <button class="tb" id="tool-drag" data-tool="drag" title="Drag / pan canvas (G)">✋</button>
+      <span class="toolbar-sep"></span>
+      <button class="tb" id="tool-pen" data-tool="pen" title="Pen (P)">✏️</button>
+      <button class="tb" id="tool-highlight" data-tool="highlight" title="Highlighter (H)">🖍️</button>
+      <div style="position:relative">
+        <button class="tb" id="tool-shape" data-tool="shape" title="Shapes (S)">▱</button>
+        <div class="shape-menu" id="shapeMenu">
+          <button class="tb" data-shape="line" title="Line">╱</button>
+          <button class="tb" data-shape="arrow" title="Arrow">➜</button>
+          <button class="tb" data-shape="darrow" title="Double arrow">↔</button>
+          <button class="tb" data-shape="rect" title="Rectangle">▭</button>
+          <button class="tb" data-shape="roundrect" title="Rounded rectangle">▢</button>
+          <button class="tb" data-shape="ellipse" title="Ellipse / circle">◯</button>
+          <button class="tb" data-shape="triangle" title="Triangle">△</button>
+          <button class="tb" data-shape="diamond" title="Diamond">◇</button>
+          <button class="tb" data-shape="pentagon" title="Pentagon">⬠</button>
+          <button class="tb" data-shape="hexagon" title="Hexagon">⬡</button>
+          <button class="tb" data-shape="star" title="Star">☆</button>
+        </div>
+      </div>
+      <button class="tb" id="tool-text" data-tool="text" title="Text (T)">T</button>
+      <button class="tb" id="tool-erase" data-tool="erase" title="Eraser (E)">🧹</button>
+      <span class="toolbar-sep"></span>
+      <input type="color" class="color-picker" id="penColor" value="#1a1a2e" title="Color">
+      <div class="swatches" id="swatches"></div>
+      <span class="toolbar-sep"></span>
+      <div class="size-control" title="Size">
+        <button class="size-btn" id="sizeDown">−</button>
+        <span class="size-label" id="sizeDisplay">4</span>
+        <button class="size-btn" id="sizeUp">+</button>
+      </div>
+      <span style="flex:1"></span>
+      <select id="smoothSel" class="style-picker" title="Stroke smoothing (stabilizer): removes hand tremor. Higher = smoother lines, slightly softer corners">
+        <option value="0">Smooth: Off</option>
+        <option value="2">Smooth: Low</option>
+        <option value="3.5" selected>Smooth: Medium</option>
+        <option value="5.5">Smooth: High</option>
+      </select>
+      <select id="pageStyle" class="style-picker" title="Page style">
+        <option value="blank">Blank</option>
+        <option value="lined">Lined</option>
+        <option value="grid">Grid</option>
+        <option value="dot">Dot grid</option>
+      </select>
+      <input type="color" class="color-picker" id="bgColor" value="#faf9f6" title="Page color">
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="staticCanvas"></canvas>
+      <canvas id="drawCanvas"></canvas>
+      <div class="canvas-empty" id="canvasEmpty">Pick a tool and start writing →</div>
+    </div>
+
+    <div class="notes-footer">
+      <button class="btn btn-icon" id="notePrevBtn" title="Previous page" disabled>◀</button>
+      <span class="page-indicator" id="pageIndicator">Page 1 / 1</span>
+      <button class="btn btn-icon" id="noteNextBtn" title="Next page">▶</button>
+      <button class="btn btn-icon" id="addPageBtn" title="Add page">＋</button>
+      <button class="btn btn-icon" id="delPageBtn" title="Delete last page" style="color:var(--red)" disabled>🗑</button>
+      <span class="footer-spacer"></span>
+      <div class="zoom-group">
+        <button class="btn btn-icon" id="canvasZoomOut" title="Zoom out">−</button>
+        <span class="zoom-info" id="canvasZoomInfo">100%</span>
+        <button class="btn btn-icon" id="canvasZoomIn" title="Zoom in">+</button>
+        <button class="btn btn-icon" id="canvasFit" title="Fit page">Fit</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="boards-overlay" id="boardsOverlay"></div>
+<aside class="boards-panel" id="boardsPanel" aria-hidden="true">
+  <div class="boards-head"><span>My boards</span><button class="tb" id="boardsClose" title="Close">✕</button></div>
+  <div class="boards-actions">
+    <button class="btn btn-primary" id="newBoardBtn">+ New board</button>
+    <button class="btn" id="openBoardFileBtn">Open a board file…</button>
+    <button class="btn" id="exportAllBtn" title="Save every board into one backup file (use it to move boards between the browser and the desktop app)">Export all boards…</button>
+  </div>
+  <div class="boards-list" id="boardsList"></div>
+  <div class="boards-foot" id="boardsFoot"></div>
+</aside>
+
+<div class="modal-overlay" id="helpOverlay">
+  <div class="modal" id="helpModal">
+    <div class="modal-head"><span>Keyboard shortcuts</span><button class="tb" id="helpClose" title="Close">✕</button></div>
+    <div class="modal-body" id="helpBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ===== Inlined perfect-freehand stroke engine (v1.2.2, MIT, Steve Ruiz) ===== -->
+<script>
+(function(){
+function $(e,t,u,x=h=>h){return e*x(.5-t*(.5-u))}function se(e){return[-e[0],-e[1]]}function l(e,t){return[e[0]+t[0],e[1]+t[1]]}function a(e,t){return[e[0]-t[0],e[1]-t[1]]}function b(e,t){return[e[0]*t,e[1]*t]}function he(e,t){return[e[0]/t,e[1]/t]}function R(e){return[e[1],-e[0]]}function B(e,t){return e[0]*t[0]+e[1]*t[1]}function ue(e,t){return e[0]===t[0]&&e[1]===t[1]}function ge(e){return Math.hypot(e[0],e[1])}function de(e){return e[0]*e[0]+e[1]*e[1]}function A(e,t){return de(a(e,t))}function G(e){return he(e,ge(e))}function ie(e,t){return Math.hypot(e[1]-t[1],e[0]-t[0])}function L(e,t,u){let x=Math.sin(u),h=Math.cos(u),y=e[0]-t[0],n=e[1]-t[1],f=y*h-n*x,d=y*x+n*h;return[f+t[0],d+t[1]]}function K(e,t,u){return l(e,b(a(t,e),u))}function ee(e,t,u){return l(e,b(t,u))}var{min:C,PI:xe}=Math,pe=.275,V=xe+1e-4;function ce(e,t={}){let{size:u=16,smoothing:x=.5,thinning:h=.5,simulatePressure:y=!0,easing:n=r=>r,start:f={},end:d={},last:D=!1}=t,{cap:S=!0,easing:j=r=>r*(2-r)}=f,{cap:q=!0,easing:c=r=>--r*r*r+1}=d;if(e.length===0||u<=0)return[];let p=e[e.length-1].runningLength,g=f.taper===!1?0:f.taper===!0?Math.max(u,p):f.taper,T=d.taper===!1?0:d.taper===!0?Math.max(u,p):d.taper,te=Math.pow(u*x,2),_=[],M=[],H=e.slice(0,10).reduce((r,i)=>{let o=i.pressure;if(y){let s=C(1,i.distance/u),W=C(1,1-s);o=C(1,r+(W-r)*(s*pe))}return(r+o)/2},e[0].pressure),m=$(u,h,e[e.length-1].pressure,n),U,X=e[0].vector,z=e[0].point,F=z,O=z,E=F,J=!1;for(let r=0;r<e.length;r++){let{pressure:i}=e[r],{point:o,vector:s,distance:W,runningLength:I}=e[r];if(r<e.length-1&&p-I<3)continue;if(h){if(y){let v=C(1,W/u),Z=C(1,1-v);i=C(1,H+(Z-H)*(v*pe))}m=$(u,h,i,n)}else m=u/2;U===void 0&&(U=m);let le=I<g?j(I/g):1,fe=p-I<T?c((p-I)/T):1;m=Math.max(.01,m*Math.min(le,fe));let re=(r<e.length-1?e[r+1]:e[r]).vector,Y=r<e.length-1?B(s,re):1,be=B(s,X)<0&&!J,ne=Y!==null&&Y<0;if(be||ne){let v=b(R(X),m);for(let Z=1/13,w=0;w<=1;w+=Z)O=L(a(o,v),o,V*w),_.push(O),E=L(l(o,v),o,V*-w),M.push(E);z=O,F=E,ne&&(J=!0);continue}if(J=!1,r===e.length-1){let v=b(R(s),m);_.push(a(o,v)),M.push(l(o,v));continue}let oe=b(R(K(re,s,Y)),m);O=a(o,oe),(r<=1||A(z,O)>te)&&(_.push(O),z=O),E=l(o,oe),(r<=1||A(F,E)>te)&&(M.push(E),F=E),H=i,X=s}let P=e[0].point.slice(0,2),k=e.length>1?e[e.length-1].point.slice(0,2):l(e[0].point,[1,1]),Q=[],N=[];if(e.length===1){if(!(g||T)||D){let r=ee(P,G(R(a(P,k))),-(U||m)),i=[];for(let o=1/13,s=o;s<=1;s+=o)i.push(L(r,P,V*2*s));return i}}else{if(!(g||T&&e.length===1))if(S)for(let i=1/13,o=i;o<=1;o+=i){let s=L(M[0],P,V*o);Q.push(s)}else{let i=a(_[0],M[0]),o=b(i,.5),s=b(i,.51);Q.push(a(P,o),a(P,s),l(P,s),l(P,o))}let r=R(se(e[e.length-1].vector));if(T||g&&e.length===1)N.push(k);else if(q){let i=ee(k,r,m);for(let o=1/29,s=o;s<1;s+=o)N.push(L(i,k,V*3*s))}else N.push(l(k,b(r,m)),l(k,b(r,m*.99)),a(k,b(r,m*.99)),a(k,b(r,m)))}return _.concat(N,M.reverse(),Q)}function me(e,t={}){var q;let{streamline:u=.5,size:x=16,last:h=!1}=t;if(e.length===0)return[];let y=.15+(1-u)*.85,n=Array.isArray(e[0])?e:e.map(({x:c,y:p,pressure:g=.5})=>[c,p,g]);if(n.length===2){let c=n[1];n=n.slice(0,-1);for(let p=1;p<5;p++)n.push(K(n[0],c,p/4))}n.length===1&&(n=[...n,[...l(n[0],[1,1]),...n[0].slice(2)]]);let f=[{point:[n[0][0],n[0][1]],pressure:n[0][2]>=0?n[0][2]:.25,vector:[1,1],distance:0,runningLength:0}],d=!1,D=0,S=f[0],j=n.length-1;for(let c=1;c<n.length;c++){let p=h&&c===j?n[c].slice(0,2):K(S.point,n[c],y);if(ue(S.point,p))continue;let g=ie(p,S.point);if(D+=g,c<j&&!d){if(D<x)continue;d=!0}S={point:p,pressure:n[c][2]>=0?n[c][2]:.5,vector:G(a(S.point,p)),distance:g,runningLength:D},f.push(S)}return f[0].vector=((q=f[1])==null?void 0:q.vector)||[0,0],f}function ae(e,t={}){return ce(me(e,t),t)}var _e=ae;window.PF={getStroke:ae,getStrokeOutlinePoints:ce,getStrokePoints:me};
+})();
+</script>
+
+<!-- ===== Marginalia application ===== -->
+<script>
+'use strict';
+if (window.marginaliaDesktop) document.documentElement.classList.add('desktop');
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const $ = id => document.getElementById(id);
+const PAGE_W = 1000, PAGE_H = 1414;               // page-space dimensions (A4-ish ratio)
+const PALETTE = ['#1a1a2e','#e53e3e','#3182ce','#38a169','#d69e2e','#805ad5','#ffffff'];
+const HL_PALETTE = { default:0.38 };
+
+// ---------- Document state ----------
+let pages = [ newPage() ];
+let cur = 0;                                       // current page index
+let docLabel = 'Untitled board';                   // name of the active board
+let currentBoardId = null;                         // IndexedDB id of the active board
+let currentBoardCreated = Date.now();
+let boardSource = null;                            // remembered source for this board (yt link, etc.)
+
+function newPage(){ return { objects: [], bg: 'blank', bgColor: '#faf9f6' }; }
+function page(){ return pages[cur]; }
+
+// ---------- Tool state ----------
+let tool = 'select';
+let shapeKind = 'rect';
+let penColor = '#1a1a2e';
+let penSize = 4;
+
+// ---------- View (pan/zoom of the notebook page) ----------
+let view = { scale: 1, tx: 0, ty: 0 };
+
+// ---------- Canvas ----------
+const wrap = $('canvasWrap');
+const canvas = $('drawCanvas');
+// Two layers: the finished page (static) sits underneath; only the stroke being drawn is redrawn on the
+// transparent overlay each frame, and only its small dirty area. Much less work per frame than repainting
+// the whole notebook — noticeably smoother on high-resolution screens and without GPU acceleration.
+const ctx = canvas.getContext('2d', { desynchronized: true });      // low-latency ink
+const staticCv = $('staticCanvas');
+const staticCtx = staticCv.getContext('2d');
+let overlayDirty = null;                                          // device-px rect drawn last frame, or 'full'
+const perf = { on: !!window.marginaliaDesktop, frames: 0, ms: 0, max: 0, strokes: 0 };
+let dpr = window.devicePixelRatio || 1;
+let cssW = 0, cssH = 0;
+let staticDirty = true;
+let paintQueued = false;
+
+// ---------- Interaction ----------
+let action = null;   // {kind:'draw'|'erase'|'shape'|'pan'|'select'|'move', ...}
+let live = null;     // in-progress object being drawn
+let selection = [];  // selected object ids
+let selBox = null;   // rubber-band {x0,y0,x1,y1}
+let lassoPts = null; // freeform lasso path, page-space points
+let uid = 1;
+const nextId = () => 'o' + (uid++);
+
+// ---------- History ----------
+let undoStack = [], redoStack = [];
+function snapshot(){ return JSON.stringify(pages); }
+function pushHistory(){
+  undoStack.push(snapshot());
+  if (undoStack.length > 80) undoStack.shift();
+  redoStack.length = 0;
+  updateUndoButtons();
+}
+function undo(){
+  if (!undoStack.length) return;
+  redoStack.push(snapshot());
+  pages = JSON.parse(undoStack.pop());
+  afterHistory();
+}
+function redo(){
+  if (!redoStack.length) return;
+  undoStack.push(snapshot());
+  pages = JSON.parse(redoStack.pop());
+  afterHistory();
+}
+function afterHistory(){
+  if (cur >= pages.length) cur = pages.length - 1;
+  selection = [];
+  staticDirty = true;
+  syncPageUI(); updateUndoButtons(); requestPaint(); scheduleSave();
+}
+function updateUndoButtons(){ $('undoBtn').disabled = !undoStack.length; $('redoBtn').disabled = !redoStack.length; }
+
+// ===================================================================
+// Geometry helpers
+// ===================================================================
+function screenToPage(clientX, clientY){
+  const r = canvas.getBoundingClientRect();
+  return { x: (clientX - r.left - view.tx) / view.scale, y: (clientY - r.top - view.ty) / view.scale };
+}
+function distToSeg(px,py,x1,y1,x2,y2){
+  const dx=x2-x1, dy=y2-y1; const l2=dx*dx+dy*dy;
+  if (l2===0) return Math.hypot(px-x1,py-y1);
+  let t=((px-x1)*dx+(py-y1)*dy)/l2; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(x1+t*dx), py-(y1+t*dy));
+}
+
+// Convert a perfect-freehand outline into a smooth SVG path string
+function outlineToPath(outline){
+  if (!outline || !outline.length) return '';
+  let d = 'M ' + outline[0][0].toFixed(2) + ' ' + outline[0][1].toFixed(2) + ' Q';
+  for (let i=0;i<outline.length;i++){
+    const a0 = outline[i], a1 = outline[(i+1)%outline.length];
+    d += ' ' + a0[0].toFixed(2) + ' ' + a0[1].toFixed(2) + ' ' +
+         ((a0[0]+a1[0])/2).toFixed(2) + ' ' + ((a0[1]+a1[1])/2).toFixed(2);
+  }
+  return d + ' Z';
+}
+function strokeOptions(obj, last){
+  if (obj.type === 'highlight')
+    return { size: obj.size, thinning: 0, smoothing: .5, streamline: .55, last: !!last,
+             simulatePressure: false, start:{cap:false,taper:0}, end:{cap:false,taper:0} };
+  return { size: obj.size, thinning: .62, smoothing: .6, streamline: .46, last: !!last,
+           simulatePressure: obj.sim !== false,
+           easing: t=>t*t*(3-2*t),                    // smoothstep: a touch more contrast, softer extremes
+           start:{cap:true,taper:0}, end:{cap:true,taper:0} };
+}
+function penPath(obj, last){ return outlineToPath(PF.getStroke(obj.pts, strokeOptions(obj, last))); }
+
+// ===================================================================
+// Stroke engine v2 — a small stroke modeler in front of perfect-freehand
+//   1. Zero-lag smoothing along the stroke (removes tremor, keeps corners and endpoints)
+//   2. Pressure from timestamped velocity (mouse/touch) or smoothed stylus pressure
+//   3. Centripetal Catmull-Rom resampling so curves are curves, not polygons
+//   4. Per-stroke outline cache so panning/zooming doesn't recompute every stroke
+// ===================================================================
+const MODEL = { smoothPx: 3.5,                              // tremor smoothing radius, in screen px
+                penPressAlpha: 0.45, simPressAlpha: 0.16, velCutoff: 1.0 };
+// Tracks speed (for simulated mouse/touch pressure) and smooths stylus pressure.
+// Positions are kept raw here; they are smoothed symmetrically (zero-lag) at render time.
+class StrokeModeler{
+  constructor(isPen){ this.isPen=isPen; this.x=null; this.y=null; this.t=0; this.v=0; this.p=isPen?0.5:0.56; }
+  static a(fc,dt){ const tau=1/(2*Math.PI*fc); return 1/(1+tau/dt); }
+  add(sx,sy,rawP,t){                                   // sx,sy canvas CSS px; t ms
+    if (this.x===null){ this.x=sx; this.y=sy; this.t=t; if(this.isPen) this.p=rawP; return this.p; }
+    let dt=(t-this.t)/1000; if(!(dt>0)) dt=1/240; if(dt>0.05) dt=0.05;
+    const v=Math.hypot(sx-this.x, sy-this.y)/dt;       // px/s
+    this.x=sx; this.y=sy; this.t=t;
+    this.v += StrokeModeler.a(MODEL.velCutoff,dt)*(v-this.v);
+    const target = this.isPen ? rawP : 0.62 - Math.min(1, this.v/2200)*0.34;   // faster -> thinner
+    this.p += (this.isPen?MODEL.penPressAlpha:MODEL.simPressAlpha)*(target-this.p);
+    return this.p;
+  }
+}
+// Zero-lag Gaussian smoothing along arc length. Removes hand tremor / pixel stair-steps
+// without pulling the line behind the pen or cutting corners; endpoints stay put.
+(function(){ try{ const v=parseFloat(localStorage.getItem('marginalia:smooth')); if(!isNaN(v)&&v>=0&&v<=8) MODEL.smoothPx=v; }catch(e){} })();
+function smoothStroke(pts, sigma){
+  const n=pts.length; if (n<3 || !(sigma>0)) return pts;
+  const s=new Float64Array(n);
+  for (let i=1;i<n;i++) s[i]=s[i-1]+Math.hypot(pts[i][0]-pts[i-1][0], pts[i][1]-pts[i-1][1]);
+  const L=s[n-1], out=new Array(n); out[0]=pts[0]; out[n-1]=pts[n-1];
+  let lo=0, hi=0;
+  for (let i=1;i<n-1;i++){
+    const sg=Math.min(sigma, s[i]/2, (L-s[i])/2);
+    if (sg<1e-3){ out[i]=pts[i]; continue; }
+    const r=3*sg;
+    while (s[lo] < s[i]-r) lo++;
+    if (hi<i) hi=i;
+    while (hi<n-1 && s[hi+1] <= s[i]+r) hi++;
+    while (hi>i && s[hi] > s[i]+r) hi--;
+    let wx=0, wy=0, wp=0, ws=0;
+    for (let j=lo;j<=hi;j++){ const d=s[j]-s[i], w=Math.exp(-(d*d)/(2*sg*sg));
+      wx+=w*pts[j][0]; wy+=w*pts[j][1]; wp+=w*pts[j][2]; ws+=w; }
+    out[i]=[wx/ws, wy/ws, wp/ws];
+  }
+  return out;
+}
+// Centripetal Catmull-Rom point (Barry–Goldman). Points are [x,y,pressure].
+function crPoint(p0,p1,p2,p3,t){
+  const d=(a,b)=>Math.max(1e-4, Math.sqrt(Math.hypot(b[0]-a[0], b[1]-a[1])));
+  const t1=d(p0,p1), t2=t1+d(p1,p2), t3=t2+d(p2,p3), u=t1+(t2-t1)*t;
+  const L=(a,b,ta,tb)=>{ const w=(u-ta)/(tb-ta); return [a[0]+(b[0]-a[0])*w, a[1]+(b[1]-a[1])*w]; };
+  const A1=L(p0,p1,0,t1), A2=L(p1,p2,t1,t2), A3=L(p2,p3,t2,t3);
+  const B1=L(A1,A2,0,t2),  B2=L(A2,A3,t1,t3), C=L(B1,B2,t1,t2);
+  return [C[0], C[1], p1[2]+(p2[2]-p1[2])*t];
+}
+function resampleStroke(pts, step){
+  const P=[]; for (const p of pts){ const q=P[P.length-1]; if(!q || Math.hypot(p[0]-q[0],p[1]-q[1])>0.08) P.push(p); }
+  if (P.length<3) return P.length ? P : pts;
+  const out=[P[0]];
+  for (let i=0;i<P.length-1;i++){
+    const p0=P[i-1]||P[i], p1=P[i], p2=P[i+1], p3=P[i+2]||P[i+1];
+    const n=Math.max(1, Math.ceil(Math.hypot(p2[0]-p1[0], p2[1]-p1[1])/step));
+    for (let k=1;k<=n;k++) out.push(crPoint(p0,p1,p2,p3,k/n));
+  }
+  return out;
+}
+function strokeOptions2(obj, last){
+  if (obj.type==='highlight')
+    return { size:obj.size, thinning:0, smoothing:.5, streamline:.1, last:!!last, simulatePressure:false,
+             start:{cap:false,taper:0}, end:{cap:false,taper:0} };
+  return { size:obj.size, thinning:.6, smoothing:.55, streamline:.12, last:!!last, simulatePressure:false,
+           easing:t=>t*t*(3-2*t), start:{cap:true,taper:0}, end:{cap:true,taper:0} };
+}
+const pathCache = new WeakMap();           // committed stroke -> Path2D
+function strokePath2D(obj, last){
+  if (last){ const hit=pathCache.get(obj); if (hit) return hit; }
+  let d;
+  if (obj.eng===2){
+    const step=Math.min(2.5, Math.max(0.5, obj.size*0.25));
+    d=outlineToPath(PF.getStroke(smoothStroke(resampleStroke(obj.pts, step), obj.sm||0), strokeOptions2(obj, last)));  // even spacing first, so smoothing is the same at any drawing speed
+  } else d=penPath(obj, last);             // legacy strokes render exactly as before
+  const p=new Path2D(d);
+  if (last) pathCache.set(obj, p);
+  return p;
+}
+// feed one pointer event through the modeler into the live stroke
+function modelPoint(ev){
+  const r=action.rect, sx=ev.clientX-r.left, sy=ev.clientY-r.top;
+  const p=action.model.add(sx, sy, getPressure(ev), ev.timeStamp);
+  live.pts.push([(sx-view.tx)/view.scale, (sy-view.ty)/view.scale, p]);
+}
+
+// Bounding box (page-space) for any object
+function bbox(obj){
+  if (obj.type==='pen' || obj.type==='highlight'){
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; const pad=obj.size/2+2;
+    for (const p of obj.pts){ x0=Math.min(x0,p[0]); y0=Math.min(y0,p[1]); x1=Math.max(x1,p[0]); y1=Math.max(y1,p[1]); }
+    return {x0:x0-pad,y0:y0-pad,x1:x1+pad,y1:y1+pad};
+  }
+  if (obj.type==='shape'){
+    const x0=Math.min(obj.x0,obj.x1), y0=Math.min(obj.y0,obj.y1);
+    const x1=Math.max(obj.x0,obj.x1), y1=Math.max(obj.y0,obj.y1); const pad=obj.size+2;
+    return {x0:x0-pad,y0:y0-pad,x1:x1+pad,y1:y1+pad};
+  }
+  if (obj.type==='text'){
+    const m = measureText(obj);
+    return {x0:obj.x-2, y0:obj.y-2, x1:obj.x+m.w+4, y1:obj.y+m.h+4};
+  }
+  return {x0:0,y0:0,x1:0,y1:0};
+}
+function pointHitsObject(px,py,obj){
+  const thr = Math.max(8, (obj.size||6)/2 + 6);
+  if (obj.type==='pen' || obj.type==='highlight'){
+    for (let i=0;i<obj.pts.length-1;i++)
+      if (distToSeg(px,py,obj.pts[i][0],obj.pts[i][1],obj.pts[i+1][0],obj.pts[i+1][1]) < thr) return true;
+    return obj.pts.length===1 && Math.hypot(px-obj.pts[0][0],py-obj.pts[0][1])<thr;
+  }
+  if (obj.type==='shape'){
+    const {x0,y0,x1,y1}=obj;
+    if (obj.shape==='line'||obj.shape==='arrow'||obj.shape==='darrow') return distToSeg(px,py,x0,y0,x1,y1)<thr;
+    const bx0=Math.min(x0,x1),by0=Math.min(y0,y1),bx1=Math.max(x0,x1),by1=Math.max(y0,y1);
+    if (obj.shape==='ellipse'){
+      const cx=(bx0+bx1)/2, cy=(by0+by1)/2, rx=(bx1-bx0)/2||1, ry=(by1-by0)/2||1;
+      const v=((px-cx)/rx)**2+((py-cy)/ry)**2; return Math.abs(v-1) < 0.35;
+    }
+    // polygonal shapes (rect, roundrect, triangle, diamond, hexagon, pentagon, star): near any edge
+    const pts=shapePoly(obj.shape,x0,y0,x1,y1);
+    for (let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length];
+      if (distToSeg(px,py,a[0],a[1],b[0],b[1])<thr) return true; }
+    return false;
+  }
+  if (obj.type==='text'){ const b=bbox(obj); return px>=b.x0&&px<=b.x1&&py>=b.y0&&py<=b.y1; }
+  return false;
+}
+function measureText(obj){
+  ctx.save(); ctx.font = obj.size+"px Inter, sans-serif";
+  const lines = obj.text.split('\n'); let w=0;
+  for (const ln of lines) w = Math.max(w, ctx.measureText(ln).width);
+  ctx.restore();
+  return { w, h: lines.length * obj.size * 1.3, lines };
+}
+
+// ===================================================================
+// Rendering
+// ===================================================================
+function resizeCanvas(){
+  dpr = window.devicePixelRatio || 1;
+  cssW = wrap.clientWidth; cssH = wrap.clientHeight;
+  for (const c of [canvas, staticCv]){ c.width = Math.round(cssW*dpr); c.height = Math.round(cssH*dpr); }
+  for (const c of [canvas, staticCv]){ c.style.width = cssW+'px'; c.style.height = cssH+'px'; }
+  overlayDirty = null; staticDirty = true; requestPaint();
+}
+function applyWorld(c){ c.setTransform(view.scale*dpr,0,0,view.scale*dpr, view.tx*dpr, view.ty*dpr); }
+
+function drawPageBackground(c){
+  const p = page();
+  c.fillStyle = p.bgColor; c.fillRect(0,0,PAGE_W,PAGE_H);
+  c.save();
+  if (p.bg==='lined'){
+    c.strokeStyle='rgba(70,90,140,.22)'; c.lineWidth=1;
+    for (let y=48;y<PAGE_H;y+=40){ c.beginPath(); c.moveTo(0,y); c.lineTo(PAGE_W,y); c.stroke(); }
+    c.strokeStyle='rgba(229,113,113,.35)'; c.beginPath(); c.moveTo(60,0); c.lineTo(60,PAGE_H); c.stroke();
+  } else if (p.bg==='grid'){
+    c.strokeStyle='rgba(70,90,140,.18)'; c.lineWidth=1;
+    for (let x=0;x<=PAGE_W;x+=28){ c.beginPath(); c.moveTo(x,0); c.lineTo(x,PAGE_H); c.stroke(); }
+    for (let y=0;y<=PAGE_H;y+=28){ c.beginPath(); c.moveTo(0,y); c.lineTo(PAGE_W,y); c.stroke(); }
+  } else if (p.bg==='dot'){
+    c.fillStyle='rgba(70,90,140,.35)';
+    for (let x=28;x<PAGE_W;x+=28) for (let y=28;y<PAGE_H;y+=28){ c.beginPath(); c.arc(x,y,1.3,0,7); c.fill(); }
+  }
+  // page border
+  c.strokeStyle='rgba(0,0,0,.18)'; c.lineWidth=1; c.strokeRect(0.5,0.5,PAGE_W-1,PAGE_H-1);
+  c.restore();
+}
+// Closed-polygon points for polygonal shapes (normalized bbox)
+const POLY_SHAPES = ['rect','triangle','diamond','hexagon','pentagon','star','roundrect'];
+function shapePoly(shape,x0,y0,x1,y1){
+  const bx0=Math.min(x0,x1),by0=Math.min(y0,y1),bx1=Math.max(x0,x1),by1=Math.max(y0,y1);
+  const cx=(bx0+bx1)/2, cy=(by0+by1)/2, rx=(bx1-bx0)/2||1, ry=(by1-by0)/2||1;
+  if (shape==='triangle') return [[bx0,by1],[bx1,by1],[cx,by0]];
+  if (shape==='diamond')  return [[cx,by0],[bx1,cy],[cx,by1],[bx0,cy]];
+  if (shape==='hexagon'){ const p=[]; for(let i=0;i<6;i++){ const a=Math.PI/180*(60*i-90); p.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)]); } return p; }
+  if (shape==='pentagon'){ const p=[]; for(let i=0;i<5;i++){ const a=Math.PI/180*(72*i-90); p.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)]); } return p; }
+  if (shape==='star'){ const p=[]; for(let i=0;i<10;i++){ const rr=(i%2)?0.42:1; const a=Math.PI/180*(36*i-90); p.push([cx+rx*rr*Math.cos(a),cy+ry*rr*Math.sin(a)]); } return p; }
+  return [[bx0,by0],[bx1,by0],[bx1,by1],[bx0,by1]]; // rect / roundrect
+}
+function drawObject(c, obj, isLive){
+  if (obj.type==='pen' || obj.type==='highlight'){
+    const path = strokePath2D(obj, !isLive);          // cached for committed strokes
+    c.save(); c.globalAlpha = obj.opacity!=null?obj.opacity:1; c.fillStyle = obj.color; c.fill(path); c.restore();
+  } else if (obj.type==='shape'){
+    c.save(); c.strokeStyle=obj.color; c.lineWidth=obj.size; c.lineCap='round'; c.lineJoin='round';
+    const {x0,y0,x1,y1}=obj;
+    const arrowHead=(fromX,fromY,toX,toY)=>{ const ang=Math.atan2(toY-fromY,toX-fromX), h=Math.max(12,obj.size*3.2);
+      c.beginPath(); c.moveTo(toX,toY); c.lineTo(toX-h*Math.cos(ang-0.4),toY-h*Math.sin(ang-0.4));
+      c.moveTo(toX,toY); c.lineTo(toX-h*Math.cos(ang+0.4),toY-h*Math.sin(ang+0.4)); c.stroke(); };
+    if (obj.shape==='line' || obj.shape==='arrow' || obj.shape==='darrow'){
+      c.beginPath(); c.moveTo(x0,y0); c.lineTo(x1,y1); c.stroke();
+      if (obj.shape==='arrow' || obj.shape==='darrow') arrowHead(x0,y0,x1,y1);
+      if (obj.shape==='darrow') arrowHead(x1,y1,x0,y0);
+    } else if (obj.shape==='ellipse'){
+      const cx=(x0+x1)/2, cy=(y0+y1)/2, rx=Math.abs(x1-x0)/2, ry=Math.abs(y1-y0)/2;
+      c.beginPath(); c.ellipse(cx,cy,rx,ry,0,0,7); c.stroke();
+    } else if (obj.shape==='roundrect'){
+      const bx0=Math.min(x0,x1),by0=Math.min(y0,y1),bw=Math.abs(x1-x0),bh=Math.abs(y1-y0);
+      const r=Math.max(0,Math.min(24,bw/2,bh/2));
+      c.beginPath();
+      if (c.roundRect) c.roundRect(bx0,by0,bw,bh,r);
+      else { c.moveTo(bx0+r,by0); c.arcTo(bx0+bw,by0,bx0+bw,by0+bh,r); c.arcTo(bx0+bw,by0+bh,bx0,by0+bh,r); c.arcTo(bx0,by0+bh,bx0,by0,r); c.arcTo(bx0,by0,bx0+bw,by0,r); c.closePath(); }
+      c.stroke();
+    } else {
+      const pts=shapePoly(obj.shape,x0,y0,x1,y1);
+      c.beginPath(); c.moveTo(pts[0][0],pts[0][1]);
+      for (let i=1;i<pts.length;i++) c.lineTo(pts[i][0],pts[i][1]);
+      c.closePath(); c.stroke();
+    }
+    c.restore();
+  } else if (obj.type==='text'){
+    c.save(); c.fillStyle=obj.color; c.font=obj.size+"px Inter, sans-serif"; c.textBaseline='top';
+    obj.text.split('\n').forEach((ln,i)=> c.fillText(ln, obj.x, obj.y + i*obj.size*1.3));
+    c.restore();
+  }
+}
+function renderStatic(){
+  staticCtx.setTransform(1,0,0,1,0,0);
+  staticCtx.clearRect(0,0,staticCv.width,staticCv.height);
+  applyWorld(staticCtx);
+  drawPageBackground(staticCtx);
+  for (const obj of page().objects) drawObject(staticCtx, obj);
+  staticDirty = false;
+}
+function paint(){
+  paintQueued = false;
+  const t0 = perf.on && live ? performance.now() : 0;
+  if (staticDirty) renderStatic();
+  const needsFull = selection.length || selBox || (lassoPts && lassoPts.length);
+  ctx.setTransform(1,0,0,1,0,0);
+  if (overlayDirty==='full') ctx.clearRect(0,0,canvas.width,canvas.height);
+  else if (overlayDirty) ctx.clearRect(overlayDirty.x, overlayDirty.y, overlayDirty.w, overlayDirty.h);
+  overlayDirty = null;
+  applyWorld(ctx);
+  // live drawing (only its own area is cleared/redrawn next frame)
+  if (live){
+    drawObject(ctx, live, true);
+    if (!needsFull){ const b=bbox(live), s=view.scale*dpr, pad=((live.size||4)*1.2+4)*s+4;
+      overlayDirty={ x:Math.floor(b.x0*s+view.tx*dpr-pad), y:Math.floor(b.y0*s+view.ty*dpr-pad),
+                     w:Math.ceil((b.x1-b.x0)*s+2*pad), h:Math.ceil((b.y1-b.y0)*s+2*pad) }; }
+  }
+  if (needsFull) overlayDirty='full';
+  // selection outlines + handles
+  if (selection.length){
+    ctx.save(); ctx.strokeStyle='rgba(123,104,238,.9)'; ctx.lineWidth=1.5/view.scale; ctx.setLineDash([6/view.scale,4/view.scale]);
+    for (const id of selection){ const o=page().objects.find(o=>o.id===id); if(!o) continue; const b=bbox(o);
+      ctx.strokeRect(b.x0,b.y0,b.x1-b.x0,b.y1-b.y0); }
+    ctx.restore();
+  }
+  if (selBox){
+    ctx.save(); ctx.strokeStyle='rgba(123,104,238,.9)'; ctx.fillStyle='rgba(123,104,238,.10)';
+    ctx.lineWidth=1/view.scale; ctx.setLineDash([5/view.scale,3/view.scale]);
+    const x=Math.min(selBox.x0,selBox.x1), y=Math.min(selBox.y0,selBox.y1);
+    const w=Math.abs(selBox.x1-selBox.x0), h=Math.abs(selBox.y1-selBox.y0);
+    ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h); ctx.restore();
+  }
+  if (lassoPts && lassoPts.length){
+    ctx.save(); ctx.strokeStyle='rgba(123,104,238,.95)'; ctx.fillStyle='rgba(123,104,238,.10)';
+    ctx.lineWidth=1.5/view.scale; ctx.setLineDash([6/view.scale,4/view.scale]);
+    ctx.beginPath(); ctx.moveTo(lassoPts[0][0],lassoPts[0][1]);
+    for (let i=1;i<lassoPts.length;i++) ctx.lineTo(lassoPts[i][0],lassoPts[i][1]);
+    ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+  if (t0){ const d=performance.now()-t0; perf.frames++; perf.ms+=d; if(d>perf.max) perf.max=d; }
+}
+
+function requestPaint(){ if (!paintQueued){ paintQueued=true; requestAnimationFrame(paint); } }
+
+// ===================================================================
+// Pointer interaction on the notebook canvas
+// ===================================================================
+function getPressure(e){
+  if (e.pointerType==='pen') return e.pressure>0 ? e.pressure : 0.5;
+  return 0.5; // mouse / touch: constant, perfect-freehand simulates variation
+}
+canvas.addEventListener('pointerdown', e=>{
+  if (e.button===1 || e.button===2){ startPan(e); return; }         // middle / right = pan
+  const alt = e.altKey || spaceDown;
+  if (alt || tool==='drag'){ startPan(e); return; }
+  canvas.setPointerCapture(e.pointerId);
+  const {x,y} = screenToPage(e.clientX, e.clientY);
+  $('canvasEmpty').style.display='none';
+
+  if (tool==='pen' || tool==='highlight'){
+    const isHl = tool==='highlight';
+    live = { id:nextId(), type: isHl?'highlight':'pen', pts: [], eng: 2, sm: MODEL.smoothPx/view.scale,
+             color: penColor, size: isHl ? penSize*4 : penSize,
+             opacity: isHl ? HL_PALETTE.default : 1 };
+    action = {kind:'draw', model:new StrokeModeler(e.pointerType==='pen'), rect:canvas.getBoundingClientRect(), start:performance.now()};
+    modelPoint(e);
+  } else if (tool==='erase'){
+    pushHistory(); action={kind:'erase'}; eraseAt(x,y);
+  } else if (tool==='shape'){
+    live = { id:nextId(), type:'shape', shape:shapeKind, x0:x,y0:y,x1:x,y1:y, color:penColor, size:penSize };
+    action={kind:'shape'};
+  } else if (tool==='text'){
+    openTextEditor(x,y,null);
+  } else if (tool==='select'){
+    const hit = topObjectAt(x,y);
+    if (hit && selection.includes(hit.id)){
+      pushHistory(); action={kind:'move', lastX:x, lastY:y, moved:false};
+    } else if (hit){
+      selection = e.shiftKey ? [...new Set([...selection,hit.id])] : [hit.id];
+      pushHistory(); action={kind:'move', lastX:x, lastY:y, moved:false};
+      requestPaint();
+    } else {
+      selection = []; selBox={x0:x,y0:y,x1:x,y1:y}; action={kind:'select'}; requestPaint();
+    }
+  } else if (tool==='lasso'){
+    // If clicking inside an existing selection, move it; otherwise start a new lasso.
+    let sb=null;
+    for (const id of selection){ const o=page().objects.find(o=>o.id===id); if(!o) continue; const ob=bbox(o);
+      sb = sb ? {x0:Math.min(sb.x0,ob.x0),y0:Math.min(sb.y0,ob.y0),x1:Math.max(sb.x1,ob.x1),y1:Math.max(sb.y1,ob.y1)} : {...ob}; }
+    if (sb && x>=sb.x0 && x<=sb.x1 && y>=sb.y0 && y<=sb.y1){
+      pushHistory(); action={kind:'move', lastX:x, lastY:y, moved:false};
+    } else {
+      selection=[]; lassoPts=[[x,y]]; action={kind:'lasso'}; requestPaint();
+    }
+  }
+});
+canvas.addEventListener('pointermove', e=>{
+  if (action && action.kind==='pan'){ doPan(e); return; }
+  if (!action) { updateCursor(e); return; }
+  const {x,y} = screenToPage(e.clientX, e.clientY);
+  if (action.kind==='draw'){
+    // Capture every sub-frame point a high-rate stylus reports, not just one per move event
+    const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+    for (const ev of evs) modelPoint(ev);
+    requestPaint();
+  } else if (action.kind==='erase'){
+    eraseAt(x,y);
+  } else if (action.kind==='shape'){
+    if (e.shiftKey && live.shape!=='line' && live.shape!=='arrow' && live.shape!=='darrow'){
+      const d=Math.max(Math.abs(x-live.x0),Math.abs(y-live.y0));
+      live.x1=live.x0+Math.sign(x-live.x0||1)*d; live.y1=live.y0+Math.sign(y-live.y0||1)*d;
+    } else { live.x1=x; live.y1=y; }
+    requestPaint();
+  } else if (action.kind==='select'){
+    selBox.x1=x; selBox.y1=y; requestPaint();
+  } else if (action.kind==='lasso'){
+    lassoPts.push([x,y]); requestPaint();
+  } else if (action.kind==='move'){
+    const dx=x-action.lastX, dy=y-action.lastY; action.lastX=x; action.lastY=y;
+    if (dx||dy){ action.moved=true; moveSelection(dx,dy); staticDirty=true; requestPaint(); }
+  }
+});
+function endAction(e){
+  if (!action) return;
+  if (action.kind==='draw' && live){
+    // committed strokes render with perfect-freehand's `last` flag for a clean end cap
+    if (perf.on && perf.strokes < 6 && live.pts.length > 5){
+      perf.strokes++;
+      const dur=(performance.now()-action.start)/1000;
+      console.warn('[perf] stroke '+perf.strokes+': '+live.type+(action.model.isPen?' (stylus)':' (mouse/touch)')+
+        ', '+live.pts.length+' points in '+dur.toFixed(2)+' s = '+Math.round(live.pts.length/Math.max(dur,0.001))+' pts/s'+
+        ', '+perf.frames+' frames, paint avg '+(perf.ms/Math.max(1,perf.frames)).toFixed(1)+' ms, max '+perf.max.toFixed(1)+' ms'+
+        ', dpr '+dpr+', canvas '+canvas.width+'x'+canvas.height+', smooth '+MODEL.smoothPx);
+    }
+    perf.frames=0; perf.ms=0; perf.max=0;
+    pushHistory(); page().objects.push(live); live=null; staticDirty=true;
+  } else if (action.kind==='shape' && live){
+    if (Math.hypot(live.x1-live.x0, live.y1-live.y0) > 3){ pushHistory(); page().objects.push(live); staticDirty=true; }
+    live=null;
+  } else if (action.kind==='select'){
+    if (selBox){ const b={x0:Math.min(selBox.x0,selBox.x1),y0:Math.min(selBox.y0,selBox.y1),x1:Math.max(selBox.x0,selBox.x1),y1:Math.max(selBox.y0,selBox.y1)};
+      selection = page().objects.filter(o=>{ const ob=bbox(o); return ob.x0<b.x1&&ob.x1>b.x0&&ob.y0<b.y1&&ob.y1>b.y0; }).map(o=>o.id);
+      selBox=null; }
+  } else if (action.kind==='lasso'){
+    if (lassoPts && lassoPts.length>2) selection = page().objects.filter(o=>objectInLasso(o,lassoPts)).map(o=>o.id);
+    lassoPts=null;
+  } else if (action.kind==='move'){
+    if (!action.moved) undoStack.pop(); // no movement -> discard the history entry
+  } else if (action.kind==='erase'){
+    /* history already pushed */
+  }
+  action=null; updateUndoButtons(); requestPaint(); scheduleSave(); updateDelButton();
+}
+canvas.addEventListener('pointerup', endAction);
+canvas.addEventListener('pointercancel', endAction);
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('dblclick', e=>{
+  const {x,y}=screenToPage(e.clientX,e.clientY);
+  const hit=topObjectAt(x,y);
+  if (hit && hit.type==='text'){ selection=[]; openTextEditor(hit.x,hit.y,hit); requestPaint(); }
+});
+
+function topObjectAt(x,y){
+  const objs=page().objects;
+  for (let i=objs.length-1;i>=0;i--) if (pointHitsObject(x,y,objs[i])) return objs[i];
+  return null;
+}
+function eraseAt(x,y){
+  const objs=page().objects; let removed=false;
+  for (let i=objs.length-1;i>=0;i--) if (pointHitsObject(x,y,objs[i])){ objs.splice(i,1); removed=true; }
+  if (removed){ selection=[]; staticDirty=true; requestPaint(); }
+}
+function moveSelection(dx,dy){
+  for (const id of selection){ const o=page().objects.find(o=>o.id===id); if(!o) continue;
+    if (o.type==='pen'||o.type==='highlight'){ for (const p of o.pts){ p[0]+=dx; p[1]+=dy; } pathCache.delete(o); }
+    else if (o.type==='shape'){ o.x0+=dx;o.y0+=dy;o.x1+=dx;o.y1+=dy; }
+    else if (o.type==='text'){ o.x+=dx;o.y+=dy; }
+  }
+}
+// ---- Lasso geometry ----
+function pointInPolygon(px,py,poly){
+  let inside=false;
+  for (let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+    if (((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function getSamplePoints(obj){
+  if (obj.type==='pen'||obj.type==='highlight') return obj.pts.map(p=>[p[0],p[1]]);
+  if (obj.type==='shape'){
+    const {x0,y0,x1,y1}=obj;
+    if (obj.shape==='line'||obj.shape==='arrow'||obj.shape==='darrow'){ const p=[]; for(let t=0;t<=1.0001;t+=0.2) p.push([x0+(x1-x0)*t,y0+(y1-y0)*t]); return p; }
+    if (obj.shape==='ellipse'||obj.shape==='rect'||obj.shape==='roundrect'){}
+    else { const poly=shapePoly(obj.shape,x0,y0,x1,y1); const cx=(x0+x1)/2,cy=(y0+y1)/2; return [...poly,[cx,cy]]; }
+    const bx0=Math.min(x0,x1),by0=Math.min(y0,y1),bx1=Math.max(x0,x1),by1=Math.max(y0,y1),cx=(bx0+bx1)/2,cy=(by0+by1)/2;
+    return [[bx0,by0],[cx,by0],[bx1,by0],[bx1,cy],[bx1,by1],[cx,by1],[bx0,by1],[bx0,cy],[cx,cy]];
+  }
+  const b=bbox(obj),cx=(b.x0+b.x1)/2,cy=(b.y0+b.y1)/2;
+  return [[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1],[cx,cy]];
+}
+function objectInLasso(obj,poly){
+  const sp=getSamplePoints(obj); if(!sp.length) return false;
+  let inside=0; for(const p of sp) if(pointInPolygon(p[0],p[1],poly)) inside++;
+  const b=bbox(obj),cx=(b.x0+b.x1)/2,cy=(b.y0+b.y1)/2;
+  return pointInPolygon(cx,cy,poly) || inside/sp.length>=0.5;
+}
+// A small dot cursor (tinted to the current pen color) for freehand tools
+function dotCursor(){
+  const c = '%23' + (penColor && penColor[0]==='#' ? penColor.slice(1) : '111111');
+  return "url(\"data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='16'%20height='16'%3E%3Ccircle%20cx='8'%20cy='8'%20r='3.5'%20fill='"+c+"'%20stroke='%23ffffff'%20stroke-width='1.5'/%3E%3C/svg%3E\") 8 8, crosshair";
+}
+function updateCursor(e){
+  if (tool==='select'){ const {x,y}=screenToPage(e.clientX,e.clientY);
+    canvas.style.cursor = topObjectAt(x,y) ? 'move' : 'default'; }
+  else if (tool==='drag') canvas.style.cursor='grab';
+  else if (tool==='pen' || tool==='highlight') canvas.style.cursor=dotCursor();
+  else if (tool==='text') canvas.style.cursor='text';
+  else if (tool==='erase') canvas.style.cursor='cell';
+  else if (tool==='lasso'){ const {x,y}=screenToPage(e.clientX,e.clientY);
+    let inside=false; if(selection.length){ let sb=null; for(const id of selection){const o=page().objects.find(o=>o.id===id); if(!o)continue; const ob=bbox(o); sb=sb?{x0:Math.min(sb.x0,ob.x0),y0:Math.min(sb.y0,ob.y0),x1:Math.max(sb.x1,ob.x1),y1:Math.max(sb.y1,ob.y1)}:{...ob};} inside=sb&&x>=sb.x0&&x<=sb.x1&&y>=sb.y0&&y<=sb.y1; }
+    canvas.style.cursor = inside ? 'move' : 'crosshair'; }
+  else canvas.style.cursor='crosshair';
+}
+
+// ---------- Pan / zoom ----------
+let spaceDown=false;
+function startPan(e){ canvas.setPointerCapture(e.pointerId); action={kind:'pan', lastX:e.clientX, lastY:e.clientY}; canvas.style.cursor='grabbing'; }
+function doPan(e){ view.tx += e.clientX-action.lastX; view.ty += e.clientY-action.lastY; action.lastX=e.clientX; action.lastY=e.clientY; staticDirty=true; requestPaint(); }
+wrap.addEventListener('wheel', e=>{
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey){
+    const r=canvas.getBoundingClientRect(); const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const pageX=(mx-view.tx)/view.scale, pageY=(my-view.ty)/view.scale;
+    const factor = Math.exp(-e.deltaY*0.0015);
+    view.scale = Math.max(0.15, Math.min(6, view.scale*factor));
+    view.tx = mx - pageX*view.scale; view.ty = my - pageY*view.scale;
+  } else {
+    view.tx -= e.deltaX; view.ty -= e.deltaY;
+  }
+  staticDirty=true; updateZoomLabel(); requestPaint();
+}, {passive:false});
+function fitPage(){
+  const pad=24; const s=Math.min((cssW-pad*2)/PAGE_W, (cssH-pad*2)/PAGE_H);
+  view.scale=Math.max(0.15,s); view.tx=(cssW-PAGE_W*view.scale)/2; view.ty=pad;
+  staticDirty=true; updateZoomLabel(); requestPaint();
+}
+function zoomBy(f){
+  const cx=cssW/2, cy=cssH/2; const px=(cx-view.tx)/view.scale, py=(cy-view.ty)/view.scale;
+  view.scale=Math.max(0.15,Math.min(6,view.scale*f)); view.tx=cx-px*view.scale; view.ty=cy-py*view.scale;
+  staticDirty=true; updateZoomLabel(); requestPaint();
+}
+function updateZoomLabel(){ $('canvasZoomInfo').textContent = Math.round(view.scale*100)+'%'; }
+
+// ===================================================================
+// Text editor overlay
+// ===================================================================
+let editing=null;
+function openTextEditor(px,py,existing){
+  closeTextEditor(true);
+  const ta=document.createElement('textarea'); ta.className='text-editor';
+  const size = existing ? existing.size : Math.max(18, penSize*5);
+  ta.value = existing ? existing.text : '';
+  ta.style.color = existing ? existing.color : penColor;
+  ta.style.fontSize = (size*view.scale)+'px';
+  ta.style.left = (px*view.scale+view.tx)+'px';
+  ta.style.top  = (py*view.scale+view.ty)+'px';
+  wrap.appendChild(ta);
+  editing = { ta, px, py, size, existing };
+  setTimeout(()=>{ ta.focus(); autoGrow(ta); },0);
+  ta.addEventListener('input', ()=>autoGrow(ta));
+  ta.addEventListener('keydown', ev=>{
+    if (ev.key==='Escape'){ ev.preventDefault(); closeTextEditor(true); }
+    if (ev.key==='Enter' && (ev.ctrlKey||ev.metaKey)){ ev.preventDefault(); closeTextEditor(false); }
+  });
+  ta.addEventListener('blur', ()=>closeTextEditor(false));
+}
+function autoGrow(ta){ ta.style.width='auto'; ta.style.height='auto'; ta.style.width=Math.max(60,ta.scrollWidth+6)+'px'; ta.style.height=(ta.scrollHeight)+'px'; }
+function closeTextEditor(cancel){
+  if (!editing) return;
+  const {ta,px,py,size,existing}=editing; const text=ta.value.replace(/\s+$/,'');
+  editing=null; ta.remove();
+  if (cancel) return;
+  if (existing){
+    if (!text){ pushHistory(); page().objects=page().objects.filter(o=>o!==existing); }
+    else if (text!==existing.text){ pushHistory(); existing.text=text; }
+  } else if (text){
+    pushHistory(); page().objects.push({id:nextId(),type:'text',x:px,y:py,text,color:penColor,size});
+  }
+  staticDirty=true; requestPaint(); scheduleSave();
+}
+
+// ===================================================================
+// Toolbar wiring
+// ===================================================================
+function setTool(t){
+  tool=t;
+  document.querySelectorAll('.notes-toolbar .tb[data-tool]').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
+  $('shapeMenu').classList.toggle('show', false);
+  if (t!=='select' && t!=='drag') selection=[];
+  if (t==='pen' || t==='highlight') canvas.style.cursor=dotCursor();
+  else if (t==='drag') canvas.style.cursor='grab';
+  else if (t==='text') canvas.style.cursor='text';
+  else if (t==='erase') canvas.style.cursor='cell';
+  else canvas.style.cursor='default';
+  updateDelButton(); requestPaint();
+}
+document.querySelectorAll('.tb[data-tool]').forEach(b=> b.addEventListener('click', ()=>{
+  if (b.dataset.tool==='shape'){ setTool('shape'); $('shapeMenu').classList.toggle('show'); }
+  else setTool(b.dataset.tool);
+}));
+document.querySelectorAll('.shape-menu .tb[data-shape]').forEach(b=> b.addEventListener('click', e=>{
+  e.stopPropagation(); shapeKind=b.dataset.shape; setTool('shape'); $('shapeMenu').classList.remove('show');
+  $('tool-shape').textContent = {line:'╱',arrow:'➜',darrow:'↔',rect:'▭',roundrect:'▢',ellipse:'◯',triangle:'△',diamond:'◇',pentagon:'⬠',hexagon:'⬡',star:'☆'}[shapeKind];
+}));
+document.addEventListener('click', e=>{ if(!e.target.closest('#tool-shape') && !e.target.closest('#shapeMenu')) $('shapeMenu').classList.remove('show'); });
+
+// color + swatches
+const sw=$('swatches');
+PALETTE.forEach(col=>{ const s=document.createElement('div'); s.className='swatch'; s.style.background=col; s.dataset.col=col;
+  s.addEventListener('click',()=>setColor(col)); sw.appendChild(s); });
+function setColor(col){ penColor=col; $('penColor').value = col.length===7?col:'#1a1a2e';
+  document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active', s.dataset.col.toLowerCase()===col.toLowerCase()));
+  if (selection.length){ pushHistory(); selection.forEach(id=>{const o=page().objects.find(o=>o.id===id); if(o&&o.color!==undefined)o.color=col;}); staticDirty=true; requestPaint(); scheduleSave(); }
+  if (tool==='pen' || tool==='highlight') canvas.style.cursor=dotCursor();
+}
+$('penColor').addEventListener('input', e=>setColor(e.target.value));
+$('sizeUp').addEventListener('click', ()=>setSize(penSize+1));
+$('sizeDown').addEventListener('click', ()=>setSize(penSize-1));
+function setSize(v){ penSize=Math.max(1,Math.min(40,v)); $('sizeDisplay').textContent=penSize; }
+$('bgColor').addEventListener('input', e=>{ pushHistory(); page().bgColor=e.target.value; staticDirty=true; requestPaint(); scheduleSave(); });
+$('pageStyle').addEventListener('change', e=>{ pushHistory(); page().bg=e.target.value; staticDirty=true; requestPaint(); scheduleSave(); });
+
+// undo/redo/save/load/export
+$('undoBtn').addEventListener('click', undo);
+$('redoBtn').addEventListener('click', redo);
+$('saveBtn').addEventListener('click', saveToFile);
+$('loadBtn').addEventListener('click', ()=>$('loadInput').click());
+$('exportBtn').addEventListener('click', exportPDF);
+
+// page nav
+$('notePrevBtn').addEventListener('click', ()=>gotoPage(cur-1));
+$('noteNextBtn').addEventListener('click', ()=>{ if(cur===pages.length-1){ addPage(); } else gotoPage(cur+1); });
+$('addPageBtn').addEventListener('click', addPage);
+$('delPageBtn').addEventListener('click', delPage);
+$('canvasZoomIn').addEventListener('click', ()=>zoomBy(1.2));
+$('canvasZoomOut').addEventListener('click', ()=>zoomBy(1/1.2));
+$('canvasFit').addEventListener('click', fitPage);
+
+function gotoPage(i){ if(i<0||i>=pages.length) return; closeTextEditor(true); cur=i; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
+function addPage(){ pushHistory(); const t=newPage(); t.bg=page().bg; t.bgColor=page().bgColor; pages.push(t); cur=pages.length-1; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
+function delPage(){ if(pages.length<=1||cur!==pages.length-1) return; pushHistory(); pages.pop(); cur=pages.length-1; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
+function syncPageUI(){
+  $('pageIndicator').textContent = `Page ${cur+1} / ${pages.length}`;
+  $('notePrevBtn').disabled = cur===0;
+  $('delPageBtn').disabled = !(pages.length>1 && cur===pages.length-1);
+  $('pageStyle').value = page().bg; $('bgColor').value = page().bgColor;
+}
+function updateDelButton(){ /* selection-aware delete handled by keyboard */ }
+
+// keyboard
+window.addEventListener('keydown', e=>{
+  if (e.key==='Escape'){ if($('helpOverlay').classList.contains('open')){ closeHelp(); return; }
+    if($('boardsPanel').classList.contains('open')){ closeBoardsPanel(); return; } }
+  if (editing) return;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (e.key===' ' && !typing){ spaceDown=true; }
+  if (typing) return;
+  const mod = e.ctrlKey||e.metaKey;
+  if (e.key==='?' || (e.key==='/' && e.shiftKey)){ e.preventDefault(); toggleHelp(); return; }
+  if (mod && e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
+  if (mod && e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); return; }
+  if (mod && e.key.toLowerCase()==='a'){ e.preventDefault(); setTool('select'); selection=page().objects.map(o=>o.id); requestPaint(); return; }
+  if (mod && e.key.toLowerCase()==='d' && selection.length){ e.preventDefault(); duplicateSelection(); return; }
+  if (mod && e.key.toLowerCase()==='s'){ e.preventDefault(); saveToFile(); return; }
+  if (mod && e.key.toLowerCase()==='n'){ e.preventDefault(); newBoard(); return; }
+  if ((e.key==='Delete'||e.key==='Backspace') && selection.length){ e.preventDefault(); deleteSelection(); return; }
+  if (!mod && e.key==='['){ e.preventDefault(); setSize(penSize-1); return; }
+  if (!mod && e.key===']'){ e.preventDefault(); setSize(penSize+1); return; }
+  const map={v:'select',l:'lasso',g:'drag',p:'pen',h:'highlight',e:'erase',t:'text',s:'shape'};
+  if (map[e.key.toLowerCase()]){ setTool(map[e.key.toLowerCase()]); }
+});
+
+// ---- Keyboard shortcuts help ----
+const SHORTCUTS=[
+  {group:'Tools', items:[
+    {keys:['V'],label:'Select / move'},{keys:['L'],label:'Lasso select'},{keys:['G'],label:'Drag / pan canvas'},
+    {keys:['P'],label:'Pen'},{keys:['H'],label:'Highlighter'},{keys:['S'],label:'Shapes'},
+    {keys:['T'],label:'Text'},{keys:['E'],label:'Eraser'} ]},
+  {group:'Edit', items:[
+    {keys:['Ctrl','Z'],label:'Undo'},{keys:['Ctrl','Shift','Z'],label:'Redo'},
+    {keys:['Ctrl','A'],label:'Select all'},{keys:['Ctrl','D'],label:'Duplicate'},
+    {keys:['Delete'],label:'Delete selection'},{keys:['[',']'],label:'Pen size − / +',sep:' '} ]},
+  {group:'Canvas', items:[
+    {keys:['Ctrl','scroll'],label:'Zoom in / out'},{keys:['Space','drag'],label:'Pan'},
+    {keys:['Alt','drag'],label:'Pan'},{keys:['Shift','draw'],label:'Constrain (square / circle)'} ]},
+  {group:'Boards & files', items:[
+    {keys:['Ctrl','N'],label:'New board'},{keys:['Ctrl','S'],label:'Save board to file'},
+    {keys:['?'],label:'Show this help'},{keys:['Esc'],label:'Close panels'} ]},
+];
+function renderHelp(){
+  $('helpBody').innerHTML = SHORTCUTS.map(g=>
+    '<div class="sc-group"><h4>'+g.group+'</h4>'+
+    g.items.map(it=>'<div class="sc-row"><span>'+it.label+'</span><span class="k">'+
+      it.keys.map(k=>'<kbd>'+k+'</kbd>').join(it.sep||'+')+'</span></div>').join('')+
+    '</div>').join('');
+}
+function toggleHelp(){ $('helpOverlay').classList.contains('open')?closeHelp():openHelp(); }
+function openHelp(){ renderHelp(); $('helpOverlay').classList.add('open'); }
+function closeHelp(){ $('helpOverlay').classList.remove('open'); }
+$('helpBtn').addEventListener('click', openHelp);
+$('helpClose').addEventListener('click', closeHelp);
+$('helpOverlay').addEventListener('click', e=>{ if(e.target===$('helpOverlay')) closeHelp(); });
+window.addEventListener('keyup', e=>{ if(e.key===' ') spaceDown=false; });
+function deleteSelection(){ pushHistory(); page().objects=page().objects.filter(o=>!selection.includes(o.id)); selection=[]; staticDirty=true; requestPaint(); scheduleSave(); }
+function duplicateSelection(){ pushHistory(); const copies=[]; for(const id of selection){ const o=page().objects.find(o=>o.id===id); if(!o)continue; const c=JSON.parse(JSON.stringify(o)); c.id=nextId(); if(c.pts)for(const p of c.pts){p[0]+=16;p[1]+=16;} if(c.x0!=null){c.x0+=16;c.x1+=16;c.y0+=16;c.y1+=16;} if(c.x!=null){c.x+=16;c.y+=16;} page().objects.push(c); copies.push(c.id);} selection=copies; staticDirty=true; requestPaint(); scheduleSave(); }
+
+// ===================================================================
+// Persistence — Boards stored in IndexedDB
+// ===================================================================
+const DB_NAME='marginalia', STORE='boards';
+let _db=null, idbOK=true;
+function idb(){
+  return new Promise((res,rej)=>{ if(_db) return res(_db);
+    let r; try{ r=indexedDB.open(DB_NAME,1); }catch(e){ return rej(e); }
+    r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:'id'}); };
+    r.onsuccess=()=>{ _db=r.result; res(_db); };
+    r.onerror=()=>rej(r.error);
+  });
+}
+function idbReq(req){ return new Promise((res,rej)=>{ req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
+async function idbPut(b){ const db=await idb(); return idbReq(db.transaction(STORE,'readwrite').objectStore(STORE).put(b)); }
+async function idbGet(id){ const db=await idb(); return idbReq(db.transaction(STORE,'readonly').objectStore(STORE).get(id)); }
+async function idbGetAll(){ const db=await idb(); return idbReq(db.transaction(STORE,'readonly').objectStore(STORE).getAll()); }
+async function idbDel(id){ const db=await idb(); return idbReq(db.transaction(STORE,'readwrite').objectStore(STORE).delete(id)); }
+
+function reindexIds(){ uid=1; for(const pg of pages) for(const o of pg.objects){ o.id=nextId(); } }
+function itemCount(pgs){ return pgs.reduce((n,p)=>n+(p.objects?p.objects.length:0),0); }
+function newBoardId(){ return 'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function setSaveStatus(s){ const el=$('saveStatus'); if(!el) return;
+  el.className='save-status '+(s==='saving'?'saving':s==='error'?'err':'saved');
+  el.textContent = s==='saving'?'Saving…':s==='error'?'Not saved':'Saved'; }
+
+let saveTimer=null;
+function scheduleSave(){ if(idbOK) setSaveStatus('saving'); clearTimeout(saveTimer); saveTimer=setTimeout(saveBoard, 500); }
+async function saveBoard(){
+  if(!idbOK || !currentBoardId) return;
+  const b={ id:currentBoardId, name:docLabel, pages, source:boardSource||null,
+            created:currentBoardCreated, updated:Date.now() };
+  try{ await idbPut(b); setSaveStatus('saved'); }
+  catch(err){ setSaveStatus('error'); console.warn('save failed',err); }
+}
+async function refreshBoardsList(){
+  if(!idbOK) return;
+  let all=[]; try{ all=await idbGetAll(); }catch(e){ return; }
+  all.sort((a,b)=>(b.updated||0)-(a.updated||0));
+  const list=$('boardsList'); list.innerHTML='';
+  if(!all.length){ list.innerHTML='<div class="boards-empty">No boards yet. Create one above.</div>'; }
+  for(const b of all){
+    const n=itemCount(b.pages||[]);
+    const row=document.createElement('div'); row.className='board-item'+(b.id===currentBoardId?' active':'');
+    row.innerHTML='<div class="board-ico">'+(b.source&&b.source.type==='yt'?'▶':b.source&&b.source.type==='web'?'🌐':'▤')+'</div>'+
+      '<div class="board-meta"><div class="board-name"></div><div class="board-sub">'+n+' item'+(n===1?'':'s')+' · '+fmtDate(b.updated)+'</div></div>'+
+      '<button class="board-del" title="Delete board">🗑</button>';
+    row.querySelector('.board-name').textContent=b.name||'Untitled board';
+    row.addEventListener('click', e=>{ if(e.target.closest('.board-del')) return; openBoard(b.id); });
+    row.querySelector('.board-del').addEventListener('click', async e=>{ e.stopPropagation();
+      if(confirm('Delete “'+(b.name||'Untitled board')+'”? This cannot be undone.')) await deleteBoard(b.id); });
+    list.appendChild(row);
+  }
+  $('boardsFoot').innerHTML = all.length+' board'+(all.length===1?'':'s')+', stored in browser persistence:<br><code>Browser Storage (IndexedDB)</code>';
+}
+function fmtDate(ts){ if(!ts) return ''; const d=new Date(ts);
+  return d.toLocaleDateString(undefined,{month:'numeric',day:'numeric',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+
+async function newBoard(){
+  await saveBoard(); closeTextEditor(true);
+  currentBoardId=newBoardId(); currentBoardCreated=Date.now(); boardSource=null;
+  pages=[newPage()]; cur=0; docLabel='Untitled board';
+  undoStack=[]; redoStack=[]; selection=[]; updateUndoButtons();
+  setDocLabel(docLabel); staticDirty=true; syncPageUI(); fitPage();
+  try{ localStorage.setItem('marginalia:lastBoard',currentBoardId); }catch(e){}
+  await saveBoard(); await refreshBoardsList(); closeBoardsPanel();
+  toast('New board created','ok');
+}
+async function openBoard(id){
+  if(id===currentBoardId){ closeBoardsPanel(); return; }
+  await saveBoard(); closeTextEditor(true);
+  let b; try{ b=await idbGet(id); }catch(e){}
+  if(!b){ toast('Board not found','error'); return; }
+  currentBoardId=b.id; currentBoardCreated=b.created||Date.now(); boardSource=b.source||null;
+  pages=(b.pages&&b.pages.length)?b.pages:[newPage()]; cur=0; docLabel=b.name||'Untitled board';
+  reindexIds(); undoStack=[]; redoStack=[]; selection=[]; updateUndoButtons();
+  setDocLabel(docLabel); staticDirty=true; syncPageUI(); fitPage(); setSaveStatus('saved');
+  try{ localStorage.setItem('marginalia:lastBoard',id); }catch(e){}
+  restoreBoardSource();
+  await refreshBoardsList(); closeBoardsPanel();
+}
+async function deleteBoard(id){
+  try{ await idbDel(id); }catch(e){}
+  if(id===currentBoardId){
+    let all=[]; try{ all=await idbGetAll(); }catch(e){}
+    all.sort((a,b)=>(b.updated||0)-(a.updated||0));
+    if(all.length){ currentBoardId=null; await openBoard(all[0].id); }
+    else { await newBoard(); }
+  } else { await refreshBoardsList(); }
+  toast('Board deleted','ok');
+}
+function restoreBoardSource(){
+  if(boardSource && boardSource.type==='yt' && boardSource.ytId){
+    $('ytFrame').src='https://www.youtube.com/embed/'+boardSource.ytId+'?rel=0';
+    $('ytFallback').href='https://www.youtube.com/watch?v='+boardSource.ytId;
+    showSource('yt');
+  } else if (boardSource && boardSource.type==='web' && boardSource.url){
+    loadWebsite(boardSource.url, {mode: boardSource.mode, restoring:true});
+  }
+}
+// Give a fresh, empty, still-"Untitled" board the name of the source you just opened.
+function maybeAutoName(label, source){
+  boardSource = source || boardSource;
+  if(docLabel==='Untitled board' && itemCount(pages)===0 && label){ docLabel=label; setDocLabel(docLabel); }
+  scheduleSave(); refreshBoardsList();
+}
+async function migrateFromLocalStorage(){
+  try{
+    if(localStorage.getItem('marginalia:migrated')) return;
+    const existing=await idbGetAll(); if(existing.length){ localStorage.setItem('marginalia:migrated','1'); return; }
+    const keys=[]; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i);
+      if(k&&k.indexOf('marginalia:')===0 && k!=='marginalia:migrated' && k!=='marginalia:lastBoard') keys.push(k); }
+    for(const k of keys){ try{ const d=JSON.parse(localStorage.getItem(k));
+      if(d&&Array.isArray(d.pages)&&itemCount(d.pages)>0){
+        await idbPut({id:newBoardId(),name:d.label||k.replace('marginalia:',''),pages:d.pages,source:null,created:Date.now(),updated:Date.now()});
+      } }catch(e){} }
+    localStorage.setItem('marginalia:migrated','1');
+    if(keys.length) toast('Imported '+keys.length+' earlier notebook'+(keys.length===1?'':'s')+' into Boards','ok');
+  }catch(e){}
+}
+
+// Boards panel open/close
+function openBoardsPanel(){ refreshBoardsList(); $('boardsPanel').classList.add('open'); $('boardsOverlay').classList.add('open'); $('boardsPanel').setAttribute('aria-hidden','false'); }
+function closeBoardsPanel(){ $('boardsPanel').classList.remove('open'); $('boardsOverlay').classList.remove('open'); $('boardsPanel').setAttribute('aria-hidden','true'); }
+$('boardsBtn').addEventListener('click', openBoardsPanel);
+$('boardsClose').addEventListener('click', closeBoardsPanel);
+$('boardsOverlay').addEventListener('click', closeBoardsPanel);
+$('newBoardBtn').addEventListener('click', newBoard);
+$('openBoardFileBtn').addEventListener('click', ()=>$('loadInput').click());
+// Back up every board into one file (also how you move boards between browser and desktop app)
+$('exportAllBtn').addEventListener('click', async ()=>{
+  await saveBoard();
+  let all=[]; try{ all=await idbGetAll(); }catch(e){}
+  if(!all.length){ toast('No boards to export yet','error'); return; }
+  const data={app:'Marginalia', kind:'backup', version:1, exported:new Date().toISOString(), boards:all};
+  const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='Marginalia_boards_backup_'+new Date().toISOString().slice(0,10)+'.marginalia.json';
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  toast('Exported '+all.length+' board'+(all.length===1?'':'s'),'ok');
+});
+
+// Save current board to a portable file (backup / share)
+function saveToFile(){
+  const data={app:'Marginalia',version:1,label:docLabel,pages,source:boardSource||null};
+  const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=(docLabel||'board').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'_')+'.marginalia.json';
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); toast('Saved board to a file','ok');
+}
+// Importing a board file creates a NEW board (never overwrites the current one)
+$('loadInput').addEventListener('change', e=>{
+  const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+  r.onload=async ()=>{ try{ const d=JSON.parse(r.result);
+      if (d && d.kind==='backup' && Array.isArray(d.boards)){          // full backup -> import every board
+        await saveBoard();
+        let have=[]; try{ have=await idbGetAll(); }catch(x){}
+        const ids=new Set(have.map(b=>b.id)); let n=0, skipped=0;
+        for (const b of d.boards){
+          if(!b || !Array.isArray(b.pages)) continue;
+          if (ids.has(b.id)){                                           // same board already here: keep the newer copy
+            const mine=have.find(x=>x.id===b.id);
+            if ((mine.updated||0) >= (b.updated||0)){ skipped++; continue; }
+          }
+          await idbPut({id:b.id||newBoardId(), name:b.name||'Untitled board', pages:b.pages, source:b.source||null,
+                        created:b.created||Date.now(), updated:b.updated||Date.now()});
+          n++;
+        }
+        await refreshBoardsList();
+        toast('Imported '+n+' board'+(n===1?'':'s')+(skipped?' ('+skipped+' already up to date)':''),'ok');
+        return;
+      }
+      if(!d||!Array.isArray(d.pages)) throw 0;
+      await saveBoard();
+      currentBoardId=newBoardId(); currentBoardCreated=Date.now();
+      pages=d.pages; docLabel=d.label||f.name.replace(/\.[^.]+$/,''); boardSource=d.source||null; cur=0; reindexIds();
+      undoStack=[]; redoStack=[]; selection=[]; updateUndoButtons();
+      setDocLabel(docLabel); staticDirty=true; syncPageUI(); fitPage();
+      try{ localStorage.setItem('marginalia:lastBoard',currentBoardId); }catch(x){}
+      await saveBoard(); await refreshBoardsList(); closeBoardsPanel(); restoreBoardSource();
+      toast('Board imported','ok');
+    }catch(err){ toast('Could not read that file','error'); } };
+  r.readAsText(f); e.target.value='';
+});
+
+// ===================================================================
+// PDF export of notes
+// ===================================================================
+async function exportPDF(){
+  const nonEmpty = pages.filter(p=>p.objects.length);
+  if (!nonEmpty.length){ toast('Nothing to export yet','error'); return; }
+  toast('Building PDF…');
+  const { jsPDF } = window.jspdf;
+  const scale=2, W=PAGE_W*scale, H=PAGE_H*scale;
+  const pdf=new jsPDF({orientation:'portrait',unit:'pt',format:[PAGE_W,PAGE_H]});
+  const oc=document.createElement('canvas'); oc.width=W; oc.height=H; const oct=oc.getContext('2d');
+  const savedCur=cur;
+  let first=true;
+  for (let i=0;i<pages.length;i++){
+    const p=pages[i]; if(!p.objects.length) continue;
+    cur=i; // drawObject/background use page(); temporarily point to i
+    oct.setTransform(1,0,0,1,0,0); oct.clearRect(0,0,W,H); oct.scale(scale,scale);
+    drawPageBackground(oct);
+    for (const obj of p.objects) drawObject(oct,obj);
+    const img=oc.toDataURL('image/png');
+    if(!first) pdf.addPage([PAGE_W,PAGE_H],'portrait'); first=false;
+    pdf.addImage(img,'PNG',0,0,PAGE_W,PAGE_H);
+  }
+  cur=savedCur;
+  pdf.save((docLabel||'notes').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'_')+'.pdf');
+  toast('Exported '+nonEmpty.length+' page'+(nonEmpty.length>1?'s':'')+' to PDF','ok');
+}
+
+// ===================================================================
+// Source viewers (PDF / YouTube / local video)
+// ===================================================================
+let pdfDoc=null, pdfScale=1.2, pdfTotal=0, pdfCurrent=1;
+const io = new IntersectionObserver(entries=>{
+  for (const en of entries){ if(en.isIntersecting){ const w=en.target; if(w.dataset.rendered) continue; renderPdfPage(parseInt(w.dataset.page,10), w); } }
+}, {root:$('pdfContainer'), rootMargin:'200px'});
+
+function showSource(which){
+  $('emptyState').style.display = which==='none' ? 'flex':'none';
+  $('pdfContainer').classList.toggle('show', which==='pdf');
+  $('ytContainer').classList.toggle('show', which==='yt');
+  $('videoContainer').classList.toggle('show', which==='video');
+  $('pdfToolbar').classList.toggle('show', which==='pdf');
+  $('webContainer').classList.toggle('show', which==='web');
+  if (which!=='web'){ $('webFrame').src='about:blank'; }
+  if (which!=='yt'){ $('ytFrame').src=''; }
+  if (which!=='video'){ const v=$('localVideo'); v.pause(); v.removeAttribute('src'); v.load(); }
+}
+// PDF
+async function openPdfFile(file){
+  try{
+    $('pdfError').textContent='';
+    const buf=await file.arrayBuffer();
+    pdfDoc=await pdfjsLib.getDocument({data:buf}).promise;
+    pdfTotal=pdfDoc.numPages; pdfCurrent=1;
+    $('pdfTotalPages').textContent=pdfTotal; $('pdfPageInput').value=1;
+    buildPdfPages();
+    showSource('pdf');
+    maybeAutoName(file.name.replace(/\.[^.]+$/,''), {type:'pdf',label:file.name});
+    fitWidthPdf();
+    toast('PDF opened — '+pdfTotal+' pages','ok');
+  }catch(err){ $('pdfError').textContent='Could not open this PDF.'; console.error(err); }
+}
+function buildPdfPages(){
+  const cont=$('pdfContainer'); cont.innerHTML=''; io.disconnect&&io.takeRecords;
+  for (let i=1;i<=pdfTotal;i++){
+    const w=document.createElement('div'); w.className='pdf-page-wrapper'; w.dataset.page=i;
+    const sp=document.createElement('div'); sp.className='page-loading'; w.appendChild(sp);
+    cont.appendChild(w); io.observe(w);
+  }
+}
+async function renderPdfPage(num, wrapEl){
+  try{
+    wrapEl.dataset.rendered='1';
+    const p=await pdfDoc.getPage(num);
+    const vp=p.getViewport({scale:pdfScale*(window.devicePixelRatio||1)});
+    const cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height;
+    cv.style.width=(vp.width/(window.devicePixelRatio||1))+'px'; cv.style.height=(vp.height/(window.devicePixelRatio||1))+'px';
+    await p.render({canvasContext:cv.getContext('2d'), viewport:vp}).promise;
+    wrapEl.innerHTML=''; wrapEl.appendChild(cv);
+  }catch(err){ wrapEl.dataset.rendered=''; console.error(err); }
+}
+function rerenderPdf(){ if(!pdfDoc) return; document.querySelectorAll('.pdf-page-wrapper').forEach(w=>{ w.dataset.rendered=''; w.innerHTML='<div class="page-loading"></div>'; io.observe(w); }); }
+function fitWidthPdf(){ if(!pdfDoc) return; const cw=$('pdfContainer').clientWidth-40; pdfDoc.getPage(1).then(p=>{ const vp=p.getViewport({scale:1}); pdfScale=Math.max(0.3,cw/vp.width); $('pdfZoomInfo').textContent=Math.round(pdfScale*100)+'%'; rerenderPdf(); }); }
+$('zoomInBtn').addEventListener('click', ()=>{ pdfScale=Math.min(4,pdfScale*1.2); $('pdfZoomInfo').textContent=Math.round(pdfScale*100)+'%'; rerenderPdf(); });
+$('zoomOutBtn').addEventListener('click', ()=>{ pdfScale=Math.max(0.3,pdfScale/1.2); $('pdfZoomInfo').textContent=Math.round(pdfScale*100)+'%'; rerenderPdf(); });
+$('fitWidthBtn').addEventListener('click', fitWidthPdf);
+$('pdfPrevBtn').addEventListener('click', ()=>jumpPdf(pdfCurrent-1));
+$('pdfNextBtn').addEventListener('click', ()=>jumpPdf(pdfCurrent+1));
+$('pdfPageInput').addEventListener('change', e=>jumpPdf(parseInt(e.target.value,10)||1));
+function jumpPdf(n){ n=Math.max(1,Math.min(pdfTotal,n)); pdfCurrent=n; $('pdfPageInput').value=n; const w=document.querySelector(`.pdf-page-wrapper[data-page="${n}"]`); if(w) w.scrollIntoView({behavior:'smooth',block:'start'}); }
+$('pdfContainer').addEventListener('scroll', ()=>{ const wraps=document.querySelectorAll('.pdf-page-wrapper'); const top=$('pdfContainer').scrollTop; for(const w of wraps){ if(w.offsetTop-20<=top+80){ pdfCurrent=parseInt(w.dataset.page,10); } } $('pdfPageInput').value=pdfCurrent; });
+
+// YouTube
+function parseYouTube(url){
+  if(!url) return null; url=url.trim();
+  if(/^[\w-]{11}$/.test(url)) return url;
+  let m=url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([\w-]{11})/);
+  if(m) return m[1];
+  m=url.match(/[?&]v=([\w-]{11})/); return m?m[1]:null;
+}
+function loadYouTube(url){
+  const id=parseYouTube(url);
+  if(!id){ $('ytError').textContent='Could not find a video ID in that link.'; return; }
+  $('ytError').textContent='';
+  $('ytFrame').src='https://www.youtube.com/embed/'+id+'?rel=0';
+  $('ytFallback').href='https://www.youtube.com/watch?v='+id;
+  showSource('yt');
+  maybeAutoName('YouTube '+id, {type:'yt', ytId:id, label:'YouTube '+id});
+  if (location.protocol==='file:') toast('YouTube may show "Error 153" — it needs a local server. See the yellow note under the link box.','error');
+  else toast('YouTube loaded','ok');
+}
+$('ytLoadBtn').addEventListener('click', ()=>loadYouTube($('ytUrlInput').value));
+$('ytUrlInput').addEventListener('keydown', e=>{ if(e.key==='Enter') loadYouTube(e.target.value); });
+
+// Local video
+function openVideoFile(file){
+  const url=URL.createObjectURL(file); const v=$('localVideo'); v.src=url;
+  showSource('video');
+  maybeAutoName(file.name.replace(/\.[^.]+$/,''), {type:'video',label:file.name});
+  toast('Video opened','ok');
+}
+
+// file inputs + drops
+$('openPdfBtn').addEventListener('click', ()=>$('pdfInput').click());
+$('openVideoBtn').addEventListener('click', ()=>$('videoInput').click());
+$('openYtBtn').addEventListener('click', ()=>{ showSource('none'); $('ytUrlInput').focus(); });
+$('openWebBtn').addEventListener('click', ()=>{ showSource('none'); $('webUrlInput').focus(); });
+
+// ===================================================================
+// Website viewer: Reader view (article extracted via the local proxy) + Live view (iframe)
+// ===================================================================
+let web = { url:'', mode:'reader', proxy:null, token:0 };
+let readerSize = 18;
+try{ const s=parseInt(localStorage.getItem('marginalia:readerSize'),10); if(s>=13&&s<=28) readerSize=s; }catch(e){}
+function applyReaderSize(){ $('webArticle').style.setProperty('--rs', readerSize+'px'); }
+applyReaderSize();
+
+async function proxyAvailable(){
+  if (web.proxy!==null) return web.proxy;
+  if (location.protocol==='file:') return (web.proxy=false);
+  try{ const r=await fetch('/proxy-ping',{cache:'no-store'}); web.proxy = r.ok && (await r.text())==='ok'; }
+  catch(e){ web.proxy=false; }
+  return web.proxy;
+}
+function normalizeUrl(u){
+  u=(u||'').trim(); if(!u) return null;
+  if (!/^https?:\/\//i.test(u)) u='https://'+u.replace(/^\/+/,'');
+  try{ const x=new URL(u); return (x.protocol==='http:'||x.protocol==='https:') ? x.href : null; }catch(e){ return null; }
+}
+function setWebMode(mode){
+  web.mode=mode;
+  $('webModeReader').classList.toggle('active', mode==='reader');
+  $('webModeLive').classList.toggle('active', mode==='live');
+  $('webContainer').classList.toggle('live', mode==='live');
+  if (mode==='live'){ if ($('webFrame').getAttribute('src')!==web.url) $('webFrame').src=web.url; }
+  else $('webFrame').src='about:blank';
+  if (boardSource && boardSource.type==='web'){ boardSource.mode=mode; scheduleSave(); }
+}
+function webMessage(html){ $('webArticle').innerHTML='<div class="web-msg">'+html+'</div>'; $('webArticle').style.background='transparent'; $('webArticle').style.boxShadow='none'; }
+function webArticleStyleOn(){ $('webArticle').style.background=''; $('webArticle').style.boxShadow=''; }
+const escHtml = s => String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function loadWebsite(rawUrl, opts={}){
+  const url=normalizeUrl(rawUrl);
+  if (!url){ $('webError').textContent='That doesn’t look like a web address.'; return; }
+  $('webError').textContent='';
+  const token=++web.token;
+  web.url=url;
+  $('webUrlLabel').textContent=url; $('webUrlLabel').title=url; $('webOriginal').href=url;
+  showSource('web');
+  const hasProxy=await proxyAvailable();
+  let mode = opts.mode || 'reader';
+  if (!hasProxy && mode==='reader'){
+    mode='live';
+    if (!opts.restoring) toast('Reader view needs Start Marginalia.bat — showing the live site instead','error');
+  }
+  setWebMode(mode);
+  const host = new URL(url).hostname.replace(/^www\./,'');
+  const src = {type:'web', url, mode, label:url};
+  const nameIt = label => { if (!opts.restoring) maybeAutoName(label, src); };  // names a fresh, empty board
+  if (!opts.restoring){ boardSource = src; scheduleSave(); } else boardSource = boardSource || src;
+  if (!hasProxy){
+    nameIt(host);
+    webMessage('<b>Reader view is off.</b><br>It needs Marginalia’s local server, which fetches articles for you. Start Marginalia with <b>Start Marginalia.bat</b> (keep <b>marginalia_server.py</b> next to it) to turn it on.<br><br>Meanwhile you can use <b>Live</b> view — it works for sites that allow being shown inside other apps.');
+    return;
+  }
+  webArticleStyleOn();
+  $('webArticle').innerHTML='<div class="web-msg"><div class="web-spin"></div>Loading article…</div>';
+  try{
+    const res=await fetch('/proxy?url='+encodeURIComponent(url), {headers:{'X-Marginalia':'1'}, cache:'no-store'});
+    const body=await res.text();
+    if (token!==web.token) return;                     // a newer page was opened meanwhile
+    if (!res.ok) throw new Error(body || ('Error '+res.status));
+    const finalUrl = decodeURIComponent(res.headers.get('X-Final-URL')||'') || url;
+    const doc=new DOMParser().parseFromString(body,'text/html');
+    const base=doc.createElement('base'); base.href=finalUrl; doc.head.prepend(base);
+    const art = (typeof Readability==='function') ? new Readability(doc,{charThreshold:300}).parse() : null;
+    if (!art || !art.content || (art.textContent||'').trim().length<200){
+      nameIt(host);
+      webMessage('<b>Couldn’t find an article on this page.</b><br>It may be a home page, a login wall, or built entirely with scripts. Try the <b>Live</b> view, or open the original with ↗.');
+      return;
+    }
+    const clean = window.DOMPurify ? DOMPurify.sanitize(art.content, {FORBID_TAGS:['style','form','input','button','iframe','object','embed','script'], FORBID_ATTR:['style']}) : escHtml(art.textContent);
+    const site = art.siteName || new URL(finalUrl).hostname.replace(/^www\./,'');
+    $('webArticle').innerHTML =
+      '<div class="wa-site">'+escHtml(site)+'</div>'+
+      '<h1 class="wa-title">'+escHtml(art.title||'Untitled')+'</h1>'+
+      (art.byline?'<div class="wa-byline">'+escHtml(art.byline)+'</div>':'<div class="wa-byline"></div>')+
+      '<div class="wa-body">'+clean+'</div>';
+    $('webArticle').querySelectorAll('a[href]').forEach(a=>{ a.target='_blank'; a.rel='noopener noreferrer'; });
+    $('webArticle').querySelectorAll('img').forEach(img=>{ img.loading='lazy'; img.referrerPolicy='no-referrer'; });
+    $('webReader').scrollTop=0;
+    const title=(art.title||'').trim();
+    if (boardSource && boardSource.type==='web' && boardSource.url===url){ boardSource.label=title||url; }
+    if (!opts.restoring){ nameIt(title||host); toast('Article loaded','ok'); }
+    else refreshBoardsList();
+  }catch(err){
+    if (token!==web.token) return;
+    nameIt(host);
+    webMessage('<b>Couldn’t load this page.</b><br>'+escHtml(String(err.message||err).slice(0,200))+'<br><br>Try the <b>Live</b> view, or open the original with ↗.');
+  }
+}
+// Stroke smoothing (stabilizer) selector — applies to new strokes
+$('smoothSel').value=String(MODEL.smoothPx);
+if ($('smoothSel').value==='') $('smoothSel').value='3.5';
+$('smoothSel').addEventListener('change', e=>{ MODEL.smoothPx=parseFloat(e.target.value)||0; try{localStorage.setItem('marginalia:smooth',MODEL.smoothPx);}catch(x){} toast('Smoothing: '+e.target.selectedOptions[0].text.replace('Smooth: ',''),'ok'); e.target.blur(); });
+$('webLoadBtn').addEventListener('click', ()=>loadWebsite($('webUrlInput').value));
+$('webUrlInput').addEventListener('keydown', e=>{ if(e.key==='Enter') loadWebsite(e.target.value); });
+$('webModeReader').addEventListener('click', ()=>{ if(web.mode!=='reader'){ setWebMode('reader'); if(!web.proxy) loadWebsite(web.url,{mode:'reader',restoring:true}); } });
+$('webModeLive').addEventListener('click', ()=>setWebMode('live'));
+$('webReload').addEventListener('click', ()=>{ if(web.mode==='live'){ $('webFrame').src='about:blank'; setTimeout(()=>$('webFrame').src=web.url,30); } else loadWebsite(web.url,{mode:'reader',restoring:true}); });
+$('webFontUp').addEventListener('click', ()=>{ readerSize=Math.min(28,readerSize+1); applyReaderSize(); try{localStorage.setItem('marginalia:readerSize',readerSize);}catch(e){} });
+$('webFontDown').addEventListener('click', ()=>{ readerSize=Math.max(13,readerSize-1); applyReaderSize(); try{localStorage.setItem('marginalia:readerSize',readerSize);}catch(e){} });
+$('pdfInput').addEventListener('change', e=>{ if(e.target.files[0]) openPdfFile(e.target.files[0]); e.target.value=''; });
+$('videoInput').addEventListener('change', e=>{ if(e.target.files[0]) openVideoFile(e.target.files[0]); e.target.value=''; });
+function wireDrop(zone, kind){
+  zone.addEventListener('dragover', e=>{ e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', ()=>zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e=>{ e.preventDefault(); zone.classList.remove('dragover'); const f=e.dataTransfer.files[0]; if(!f) return;
+    if(kind==='pdf'&&f.type==='application/pdf') openPdfFile(f);
+    else if(kind==='video'&&f.type.startsWith('video/')) openVideoFile(f);
+    else toast('Unsupported file for this drop zone','error'); });
+  zone.addEventListener('click', ()=>{ (kind==='pdf'?$('pdfInput'):$('videoInput')).click(); });
+}
+wireDrop($('pdfDrop'),'pdf'); wireDrop($('videoDrop'),'video');
+
+// ===================================================================
+// Rename, resizer, boot
+// ===================================================================
+function setDocLabel(l){ docLabel=l||'Untitled board'; $('fileName').textContent=docLabel; }
+$('fileName').addEventListener('click', ()=>{
+  const inp=$('fileNameInput'); inp.value=docLabel; inp.hidden=false; $('fileName').style.display='none';
+  inp.focus(); inp.select();
+  const done=()=>{ setDocLabel(inp.value.trim()||docLabel); inp.hidden=true; $('fileName').style.display=''; scheduleSave(); refreshBoardsList(); inp.removeEventListener('blur',done); };
+  inp.addEventListener('blur',done);
+  inp.addEventListener('keydown', ev=>{ if(ev.key==='Enter') inp.blur(); if(ev.key==='Escape'){ inp.value=docLabel; inp.blur(); } });
+});
+
+// Resizer
+(function(){ const rz=$('resizer'); let dragging=false;
+  rz.addEventListener('pointerdown', e=>{ dragging=true; rz.classList.add('active'); rz.setPointerCapture(e.pointerId); });
+  rz.addEventListener('pointermove', e=>{ if(!dragging) return; const main=document.querySelector('.main'); const total=main.clientWidth; let right=total-(e.clientX-main.getBoundingClientRect().left); right=Math.max(340,Math.min(total-260,right)); $('notesPane').style.width=right+'px'; resizeCanvas(); });
+  rz.addEventListener('pointerup', e=>{ dragging=false; rz.classList.remove('active'); });
+})();
+
+new ResizeObserver(()=>resizeCanvas()).observe(wrap);
+
+function toast(msg,type){ const t=$('toast'); t.textContent=msg; t.className='toast show'+(type?(' '+type):''); clearTimeout(toast._t); toast._t=setTimeout(()=>t.className='toast',2200); }
+
+// Boot
+async function boot(){
+  if (location.protocol==='file:') $('ytFileWarn').hidden=false;
+  setColor(penColor); setSize(penSize);
+  resizeCanvas(); updateZoomLabel(); updateUndoButtons(); setTool('pen');
+  try{ await idb(); }catch(e){ idbOK=false; }
+  if(!idbOK){ // IndexedDB unavailable (e.g. private mode): run in-memory, no persistence
+    toast('Private mode: boards won’t be saved this session','error');
+    currentBoardId=newBoardId(); setDocLabel(docLabel); syncPageUI(); fitPage(); window.__marginaliaReady=true; return;
+  }
+  await migrateFromLocalStorage();
+  let all=[]; try{ all=await idbGetAll(); }catch(e){}
+  const lastId = (()=>{ try{ return localStorage.getItem('marginalia:lastBoard'); }catch(e){ return null; } })();
+  const target = all.find(b=>b.id===lastId) || all.sort((a,b)=>(b.updated||0)-(a.updated||0))[0];
+  if(target){ await openBoard(target.id); }
+  else { await newBoard(); }
+  window.__marginaliaReady=true;             // lets the desktop app confirm start-up succeeded
+}
+window.addEventListener('beforeunload', ()=>{ try{ saveBoard(); }catch(e){} });
+boot();
+</script>
+</body>
+</html>

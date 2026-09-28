@@ -1,0 +1,48 @@
+{
+  "name": "marginalia",
+  "productName": "Marginalia",
+  "version": "1.1.0",
+  "description": "Read PDFs, videos and websites side by side with a pressure-sensitive notebook.",
+  "author": "Sakib",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "prepare-app": "node scripts/prepare.js",
+    "start": "electron .",
+    "dist": "npm run prepare-app && electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "resedit": "1.7.2"
+  },
+  "build": {
+    "appId": "app.marginalia.desktop",
+    "productName": "Marginalia",
+    "copyright": "Copyright © 2026 Sakib",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "server.js", "app/**/*", "build/icon.png", "package.json"],
+    "asar": true,
+    "extraResources": ["THIRD_PARTY_LICENSES.txt", "LICENSE.txt"],
+    "afterPack": "scripts/afterPack.js",
+    "win": {
+      "target": [ { "target": "nsis", "arch": ["x64"] }, { "target": "zip", "arch": ["x64"] } ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "artifactName": "Marginalia-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Marginalia",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "Marginalia",
+      "artifactName": "Marginalia-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
