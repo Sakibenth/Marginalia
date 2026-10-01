@@ -4,15 +4,15 @@ Requirements: Windows 10 or 11, 64-bit. About 280 MB once installed. No administ
 
 ## 1. Download
 
-Get **`Marginalia-Setup-1.2.0.exe`** (84.5 MB) from the [latest release](../../../releases/latest).
+Get **`Marginalia-Setup-1.2.1.exe`** (84.5 MB) from the [latest release](../../../releases/latest).
 
 To check the download is complete and unchanged, open Command Prompt in your Downloads folder and run:
 
 ```
-certutil -hashfile Marginalia-Setup-1.2.0.exe SHA256
+certutil -hashfile Marginalia-Setup-1.2.1.exe SHA256
 ```
 
-It should print `ed11e9d9fd21232fffe2cc3006e085491892d6774f66614440eba73d80caed95`.
+It should print `ca676c00c4f0228ff7c3ba96b6421f6c9291b255732a95939a0c022ef72fce61`.
 
 ## 2. Get past the Windows warning
 

@@ -7,7 +7,7 @@ next to a **pressure-sensitive notebook**, so you can take handwritten notes wit
 
 ## Download
 
-**Windows 10 / 11 (64-bit):** get `Marginalia-Setup-1.2.0.exe` from the
+**Windows 10 / 11 (64-bit):** get `Marginalia-Setup-1.2.1.exe` from the
 [latest release](../../releases/latest). No administrator rights are needed.
 See [the install guide](docs/INSTALL.md) for the Windows SmartScreen step and first-launch notes.
 

@@ -485,6 +485,11 @@ const inkCtx = inkCv.getContext('2d', { desynchronized: true });   // finished p
 let inkNeedsClear = false;
 let overlayDirty = null;                                          // device-px rect drawn last frame, or 'full'
 const perf = { on: !!window.marginaliaDesktop, frames: 0, ms: 0, max: 0, strokes: 0 };
+// Desktop log: note any moment the page freezes for 60 ms or more (the cause of a pen "hiccup"), up to 40 per session
+if (perf.on && 'PerformanceObserver' in window){ let n=0; try{ new PerformanceObserver(list=>{ for (const e of list.getEntries()){
+  if (n>=40 || e.duration<60) continue; n++;
+  console.warn('[perf] page busy '+Math.round(e.duration)+' ms'+(action&&action.kind==='draw'?' while drawing':(action?' during '+action.kind:'')));
+} }).observe({type:'longtask'}); }catch(e){} }
 let dpr = window.devicePixelRatio || 1;
 let cssW = 0, cssH = 0;
 let staticDirty = true;
@@ -501,23 +506,44 @@ const nextId = () => 'o' + (uid++);
 
 // ---------- History ----------
 let undoStack = [], redoStack = [];
+// History entries are small: a new stroke/shape/text records just that object, other edits record only the
+// page they change. (Copying the whole notebook on every stroke froze the pen for 40-120 ms on big boards.)
 function snapshot(){ return JSON.stringify(pages); }
-function pushHistory(){
-  undoStack.push(snapshot());
-  if (undoStack.length > 80) undoStack.shift();
+function histPush(e){
+  undoStack.push(e);
+  if (undoStack.length > 120) undoStack.shift();
   redoStack.length = 0;
   updateUndoButtons();
 }
+function pushHistory(scope){                       // call BEFORE changing the current page ('all' = page list)
+  pageJsonCache.delete(page());
+  histPush(scope==='all' ? {all:true, data:snapshot()} : {p:cur, data:JSON.stringify(page())});
+}
+function pushAddHistory(obj){                      // call AFTER adding obj to the current page
+  pageJsonCache.delete(page());
+  histPush({add:true, p:cur, id:obj.id, json:JSON.stringify(obj)});
+}
+function applyHistory(e, toStack){
+  if (e.add){
+    const pg=pages[e.p]; if (!pg) return;
+    const i=pg.objects.findIndex(o=>o.id===e.id);
+    if (i>=0) pg.objects.splice(i,1); else pg.objects.push(JSON.parse(e.json));
+    pageJsonCache.delete(pg); cur=e.p; toStack.push(e);
+  } else if (e.all){
+    toStack.push({all:true, data:snapshot()}); pages=JSON.parse(e.data);
+  } else {
+    if (!pages[e.p]) return;
+    toStack.push({p:e.p, data:JSON.stringify(pages[e.p])}); pages[e.p]=JSON.parse(e.data); cur=e.p;
+  }
+}
 function undo(){
   if (!undoStack.length) return;
-  redoStack.push(snapshot());
-  pages = JSON.parse(undoStack.pop());
+  applyHistory(undoStack.pop(), redoStack);
   afterHistory();
 }
 function redo(){
   if (!redoStack.length) return;
-  undoStack.push(snapshot());
-  pages = JSON.parse(redoStack.pop());
+  applyHistory(redoStack.pop(), undoStack);
   afterHistory();
 }
 function afterHistory(){
@@ -1126,9 +1152,13 @@ function endAction(e){
         ', dpr '+dpr+', canvas '+canvas.width+'x'+canvas.height+', smooth '+MODEL.smoothPx+', pen '+penStyle+(HAS_RAW?' (raw input)':''));
     }
     perf.frames=0; perf.ms=0; perf.max=0;
-    pushHistory(); page().objects.push(live); live=null; staticDirty=true;
+    if (live.eng===3) for (const q of live.pts){ q[0]=Math.round(q[0]*100)/100; q[1]=Math.round(q[1]*100)/100; q[2]=Math.round(q[2]*1000)/1000; }
+    page().objects.push(live); pushAddHistory(live);
+    if (!staticDirty){ applyWorld(staticCtx); drawObject(staticCtx, live); }   // just add it on top, no full redraw
+    live=null;
   } else if (action.kind==='shape' && live){
-    if (Math.hypot(live.x1-live.x0, live.y1-live.y0) > 3){ pushHistory(); page().objects.push(live); staticDirty=true; }
+    if (Math.hypot(live.x1-live.x0, live.y1-live.y0) > 3){ page().objects.push(live); pushAddHistory(live);
+      if (!staticDirty){ applyWorld(staticCtx); drawObject(staticCtx, live); } }
     live=null;
   } else if (action.kind==='select'){
     if (selBox){ const b={x0:Math.min(selBox.x0,selBox.x1),y0:Math.min(selBox.y0,selBox.y1),x1:Math.max(selBox.x0,selBox.x1),y1:Math.max(selBox.y0,selBox.y1)};
@@ -1142,7 +1172,7 @@ function endAction(e){
   } else if (action.kind==='erase'){
     /* history already pushed */
   }
-  action=null; updateUndoButtons(); requestPaint(); scheduleSave(); updateDelButton();
+  action=null; updateUndoButtons(); paint(); scheduleSave(); updateDelButton();   // paint now so the finished stroke swaps in without a frame's delay
 }
 canvas.addEventListener('pointerup', endAction);
 canvas.addEventListener('pointercancel', endAction);
@@ -1278,7 +1308,7 @@ function closeTextEditor(cancel){
     if (!text){ pushHistory(); page().objects=page().objects.filter(o=>o!==existing); }
     else if (text!==existing.text){ pushHistory(); existing.text=text; }
   } else if (text){
-    pushHistory(); page().objects.push({id:nextId(),type:'text',x:px,y:py,text,color:penColor,size});
+    const tobj={id:nextId(),type:'text',x:px,y:py,text,color:penColor,size}; page().objects.push(tobj); pushAddHistory(tobj);
   }
   staticDirty=true; requestPaint(); scheduleSave();
 }
@@ -1341,8 +1371,8 @@ $('canvasZoomOut').addEventListener('click', ()=>zoomBy(1/1.2));
 $('canvasFit').addEventListener('click', fitPage);
 
 function gotoPage(i){ if(i<0||i>=pages.length) return; closeTextEditor(true); cur=i; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
-function addPage(){ pushHistory(); const t=newPage(); t.bg=page().bg; t.bgColor=page().bgColor; pages.push(t); cur=pages.length-1; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
-function delPage(){ if(pages.length<=1||cur!==pages.length-1) return; pushHistory(); pages.pop(); cur=pages.length-1; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
+function addPage(){ pushHistory('all'); const t=newPage(); t.bg=page().bg; t.bgColor=page().bgColor; pages.push(t); cur=pages.length-1; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
+function delPage(){ if(pages.length<=1||cur!==pages.length-1) return; pushHistory('all'); pages.pop(); cur=pages.length-1; selection=[]; staticDirty=true; syncPageUI(); fitPage(); scheduleSave(); }
 function syncPageUI(){
   $('pageIndicator').textContent = `Page ${cur+1} / ${pages.length}`;
   $('notePrevBtn').disabled = cur===0;
@@ -1411,21 +1441,49 @@ function duplicateSelection(){ pushHistory(); const copies=[]; for(const id of s
 // ===================================================================
 // Persistence — Boards stored in IndexedDB
 // ===================================================================
-const DB_NAME='marginalia', STORE='boards';
+const DB_NAME='marginalia', STORE='boards', PSTORE='pages';   // boards = name/source/dates, pages = one JSON string per page
 let _db=null, idbOK=true;
 function idb(){
   return new Promise((res,rej)=>{ if(_db) return res(_db);
-    let r; try{ r=indexedDB.open(DB_NAME,1); }catch(e){ return rej(e); }
-    r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:'id'}); };
+    let r; try{ r=indexedDB.open(DB_NAME,2); }catch(e){ return rej(e); }   // v2 = pages stored as JSON strings; older app versions can't open it, so they can't overwrite it
+    r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:'id'});
+      if(!db.objectStoreNames.contains(PSTORE)) db.createObjectStore(PSTORE,{keyPath:'k'}); };
     r.onsuccess=()=>{ _db=r.result; res(_db); };
     r.onerror=()=>rej(r.error);
   });
 }
 function idbReq(req){ return new Promise((res,rej)=>{ req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
-async function idbPut(b){ const db=await idb(); return idbReq(db.transaction(STORE,'readwrite').objectStore(STORE).put(b)); }
-async function idbGet(id){ const db=await idb(); return idbReq(db.transaction(STORE,'readonly').objectStore(STORE).get(id)); }
-async function idbGetAll(){ const db=await idb(); return idbReq(db.transaction(STORE,'readonly').objectStore(STORE).getAll()); }
-async function idbDel(id){ const db=await idb(); return idbReq(db.transaction(STORE,'readwrite').objectStore(STORE).delete(id)); }
+// Each page is stored as its own record holding a JSON string, and a save writes only the pages that changed.
+// (Storing the whole nested notebook in one record froze the page for 150-600 ms on big boards, often just as
+// the next word was being written.) Boards saved by v1.x with pages inside the board record still open.
+const written = new Map();                          // "boardId#page" -> JSON last written
+const pkey = (id,i) => id+'#'+String(i).padStart(4,'0');
+async function idbPut(b){
+  const db=await idb(); const pg=b.pages||[];
+  const tx=db.transaction([STORE,PSTORE],'readwrite'), ps=tx.objectStore(PSTORE);
+  tx.objectStore(STORE).put({ id:b.id, name:b.name, source:b.source, created:b.created, updated:b.updated,
+                              np:pg.length, count:itemCount(pg), fmt:2 });
+  pg.forEach((page,i)=>{ const k=pkey(b.id,i), j=pageJson(page); if (written.get(k)!==j){ ps.put({k, j}); written.set(k,j); } });
+  ps.delete(IDBKeyRange.bound(pkey(b.id,pg.length), b.id+'#\uffff'));   // pages that were removed
+  for (const k of [...written.keys()]) if (k.startsWith(b.id+'#') && k>=pkey(b.id,pg.length)) written.delete(k);
+  return new Promise((res,rej)=>{ tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error); });
+}
+async function loadPages(db, meta){
+  if (!meta || meta.fmt!==2) return meta;            // old format: pages are already inside
+  const recs=await idbReq(db.transaction(PSTORE,'readonly').objectStore(PSTORE).getAll(IDBKeyRange.bound(meta.id+'#', meta.id+'#\uffff')));
+  meta.pages = recs.slice(0, meta.np).map(r=>{ written.set(r.k, r.j); return JSON.parse(r.j); });
+  meta.pages.forEach((page,i)=>pageJsonCache.set(page, recs[i].j));
+  return meta;
+}
+async function idbGet(id){ const db=await idb(); return loadPages(db, await idbReq(db.transaction(STORE,'readonly').objectStore(STORE).get(id))); }
+// Board list (names, dates, item counts). Pass true to also load every board's pages (backup export).
+async function idbGetAll(full){ const db=await idb(); const all=await idbReq(db.transaction(STORE,'readonly').objectStore(STORE).getAll());
+  if (full) for (const m of all) await loadPages(db, m);
+  return all; }
+async function idbDel(id){ const db=await idb(); const tx=db.transaction([STORE,PSTORE],'readwrite');
+  tx.objectStore(STORE).delete(id); tx.objectStore(PSTORE).delete(IDBKeyRange.bound(id+'#', id+'#\uffff'));
+  for (const k of [...written.keys()]) if (k.startsWith(id+'#')) written.delete(k);
+  return new Promise((res,rej)=>{ tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 
 function reindexIds(){ uid=1; for(const pg of pages) for(const o of pg.objects){ o.id=nextId(); } }
 function itemCount(pgs){ return pgs.reduce((n,p)=>n+(p.objects?p.objects.length:0),0); }
@@ -1435,12 +1493,24 @@ function setSaveStatus(s){ const el=$('saveStatus'); if(!el) return;
   el.textContent = s==='saving'?'Saving…':s==='error'?'Not saved':'Saved'; }
 
 let saveTimer=null;
-function scheduleSave(){ if(idbOK) setSaveStatus('saving'); clearTimeout(saveTimer); saveTimer=setTimeout(saveBoard, 500); }
+// Boards are stored as one JSON string per page, cached until that page changes. Storing a few strings is
+// nearly free, while handing IndexedDB the full nested notebook cost 150-600 ms of frozen page on big boards.
+const pageJsonCache = new WeakMap();
+function pageJson(pg){ let j=pageJsonCache.get(pg); if (j===undefined){ j=JSON.stringify(pg); pageJsonCache.set(pg,j); } return j; }
+function scheduleSave(){
+  if (pages[cur]) pageJsonCache.delete(pages[cur]);
+  if(idbOK) setSaveStatus('saving'); clearTimeout(saveTimer); saveTimer=setTimeout(saveWhenIdle, 1200);
+}
+function saveWhenIdle(){                            // wait until the pen is up, then save
+  if (action && (action.kind==='draw' || action.kind==='erase' || action.kind==='move')){ saveTimer=setTimeout(saveWhenIdle, 400); return; }
+  saveBoard();
+}
 async function saveBoard(){
   if(!idbOK || !currentBoardId) return;
   const b={ id:currentBoardId, name:docLabel, pages, source:boardSource||null,
             created:currentBoardCreated, updated:Date.now() };
-  try{ await idbPut(b); setSaveStatus('saved'); }
+  const t0=performance.now();
+  try{ await idbPut(b); setSaveStatus('saved'); if (perf.on && performance.now()-t0>80) console.warn('[perf] save took '+Math.round(performance.now()-t0)+' ms'); }
   catch(err){ setSaveStatus('error'); console.warn('save failed',err); }
 }
 async function refreshBoardsList(){
@@ -1450,7 +1520,7 @@ async function refreshBoardsList(){
   const list=$('boardsList'); list.innerHTML='';
   if(!all.length){ list.innerHTML='<div class="boards-empty">No boards yet. Create one above.</div>'; }
   for(const b of all){
-    const n=itemCount(b.pages||[]);
+    const n=(b.count!=null)?b.count:itemCount(b.pages||[]);
     const row=document.createElement('div'); row.className='board-item'+(b.id===currentBoardId?' active':'');
     row.innerHTML='<div class="board-ico">'+(b.source&&b.source.type==='yt'?'▶':b.source&&b.source.type==='web'?'🌐':'▤')+'</div>'+
       '<div class="board-meta"><div class="board-name"></div><div class="board-sub">'+n+' item'+(n===1?'':'s')+' · '+fmtDate(b.updated)+'</div></div>'+
@@ -1540,7 +1610,7 @@ $('openBoardFileBtn').addEventListener('click', ()=>$('loadInput').click());
 // Back up every board into one file (also how you move boards between browser and desktop app)
 $('exportAllBtn').addEventListener('click', async ()=>{
   await saveBoard();
-  let all=[]; try{ all=await idbGetAll(); }catch(e){}
+  let all=[]; try{ all=(await idbGetAll(true)).map(b=>({id:b.id,name:b.name,pages:b.pages||[],source:b.source||null,created:b.created,updated:b.updated})); }catch(e){}
   if(!all.length){ toast('No boards to export yet','error'); return; }
   const data={app:'Marginalia', kind:'backup', version:1, exported:new Date().toISOString(), boards:all};
   const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
