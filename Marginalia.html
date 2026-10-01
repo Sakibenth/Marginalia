@@ -120,6 +120,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg-primary);color:var(--tex
 
 .canvas-wrap{flex:1;overflow:hidden;position:relative;background:var(--bg-primary);touch-action:none}
 #staticCanvas{position:absolute;top:0;left:0;display:block;pointer-events:none}
+#inkCanvas{position:absolute;top:0;left:0;display:block;pointer-events:none}
 #drawCanvas{position:absolute;top:0;left:0;display:block;touch-action:none}
 .canvas-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:var(--text-muted);font-size:14px;z-index:1;opacity:.6}
 .text-editor{position:absolute;z-index:20;background:rgba(255,255,255,.06);border:1px dashed var(--accent);border-radius:4px;outline:none;resize:none;overflow:hidden;font-family:'Inter',sans-serif;line-height:1.3;padding:2px 4px;color:inherit;white-space:pre;min-width:40px}
@@ -368,7 +369,11 @@ kbd{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--bg-el
         <button class="size-btn" id="sizeUp">+</button>
       </div>
       <span style="flex:1"></span>
-      <select id="smoothSel" class="style-picker" title="Stroke smoothing (stabilizer): removes hand tremor. Higher = smoother lines, slightly softer corners">
+      <select id="penStyleSel" class="style-picker" title="Pen feel. Ink: precise and light, the line stays exactly under the pen (like Rnote). Brush: the older calligraphic pen with strong pressure taper.">
+        <option value="ink" selected>Pen: Ink</option>
+        <option value="brush">Pen: Brush</option>
+      </select>
+      <select id="smoothSel" class="style-picker" title="Stroke smoothing (stabilizer): removes hand tremor. Higher = smoother lines, slightly softer corners. Off = every point exactly as the pen reports it.">
         <option value="0">Smooth: Off</option>
         <option value="2">Smooth: Low</option>
         <option value="3.5" selected>Smooth: Medium</option>
@@ -385,6 +390,7 @@ kbd{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--bg-el
 
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="staticCanvas"></canvas>
+      <canvas id="inkCanvas"></canvas>
       <canvas id="drawCanvas"></canvas>
       <div class="canvas-empty" id="canvasEmpty">Pick a tool and start writing →</div>
     </div>
@@ -474,6 +480,9 @@ const canvas = $('drawCanvas');
 const ctx = canvas.getContext('2d', { desynchronized: true });      // low-latency ink
 const staticCv = $('staticCanvas');
 const staticCtx = staticCv.getContext('2d');
+const inkCv = $('inkCanvas');
+const inkCtx = inkCv.getContext('2d', { desynchronized: true });   // finished parts of the stroke being drawn
+let inkNeedsClear = false;
 let overlayDirty = null;                                          // device-px rect drawn last frame, or 'full'
 const perf = { on: !!window.marginaliaDesktop, frames: 0, ms: 0, max: 0, strokes: 0 };
 let dpr = window.devicePixelRatio || 1;
@@ -634,6 +643,7 @@ function strokeOptions2(obj, last){
 const pathCache = new WeakMap();           // committed stroke -> Path2D
 function strokePath2D(obj, last){
   if (last){ const hit=pathCache.get(obj); if (hit) return hit; }
+  if (obj.eng===3){ const P=inkPath(obj); if (last) pathCache.set(obj,P); return P; }
   let d;
   if (obj.eng===2){
     const step=Math.min(2.5, Math.max(0.5, obj.size*0.25));
@@ -650,10 +660,170 @@ function modelPoint(ev){
   live.pts.push([(sx-view.tx)/view.scale, (sy-view.ty)/view.scale, p]);
 }
 
+// ===================================================================
+// Stroke engine v3 ("Ink") - modelled on Rnote's default pen.
+// (The spring model below is a JavaScript port of ink-stroke-modeler-rs, MIT licence.)
+// Rnote feeds pen input through Google's ink-stroke-modeler (a damped spring that follows the pen,
+// sampled at >=180 Hz, with a prediction that closes the gap to the pen tip), maps pressure to width
+// linearly, and draws every segment as a filled round-capped quad. We do the same:
+//   - positions are never re-smoothed after the fact, so what you see while writing is the final line
+//   - the live line is drawn straight from the input handler, and finished parts are baked to their own
+//     layer, so each frame only touches the newest few segments (cost stays flat on long strokes)
+//   - mouse / touch / highlighter keep a constant width, like a real pen or marker
+// ===================================================================
+const INK = { rate:180, k:11/32400, drag:72, stopDist:0.01, maxIter:20, histN:10, minSegPx:0.35, bakeEvery:48 };
+let penStyle = 'ink';
+(function(){ try{ const v=localStorage.getItem('marginalia:penStyle'); if (v==='ink'||v==='brush') penStyle=v; }catch(e){} })();
+// Smoothing level -> spring stiffness. Medium is Rnote's own tuning; Off feeds the pen points straight through.
+function inkParams(){
+  const s=MODEL.smoothPx; if (!(s>0)) return null;
+  const f=Math.pow(s/3.5, 1.9);                    // Low 0.35x, Medium 1x, High 2.4x the follow time
+  return { k: INK.k*f, drag: INK.drag/Math.sqrt(f) };   // same damping ratio at every level
+}
+function segRatio(ax,ay,bx,by,px,py){
+  const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy; if (l2===0) return 0;
+  return Math.max(0, Math.min(1, ((px-ax)*dx+(py-ay)*dy)/l2));
+}
+class InkModeler{
+  constructor(prm){ this.prm=prm; this.hist=[]; this.st=null; this.last=null; this.anchor=null; }
+  _hist(x,y,p){ this.hist.push([x,y,p]); if (this.hist.length>INK.histN) this.hist.shift(); }
+  _pressure(x,y){                                   // pressure of the nearest point on the recent raw path
+    const H=this.hist; if (!H.length) return 0.5; if (H.length===1) return H[0][2];
+    let best=Infinity, pr=H[H.length-1][2];
+    for (let i=0;i<H.length-1;i++){ const a=H[i], b=H[i+1], r=segRatio(a[0],a[1],b[0],b[1],x,y);
+      const qx=a[0]+(b[0]-a[0])*r, qy=a[1]+(b[1]-a[1])*r, d=Math.hypot(x-qx,y-qy);
+      if (d<best){ best=d; pr=a[2]+(b[2]-a[2])*r; } }
+    return pr;
+  }
+  _step(ax,ay,t){
+    const s=this.st, dt=t-s.t, k=this.prm.k, dr=this.prm.drag;
+    const accx=(ax-s.x)/k - dr*s.vx, accy=(ay-s.y)/k - dr*s.vy;
+    s.vx+=dt*accx; s.vy+=dt*accy; s.x+=dt*s.vx; s.y+=dt*s.vy; s.t=t;
+    return [s.x, s.y, this._pressure(s.x,s.y)];
+  }
+  _follow(x,y,t){                                    // spring follows the pen along the input segment
+    const out=[], a=this.anchor, t0=this.last.t;
+    const n=Math.ceil((t-t0)*INK.rate);
+    if (n>200){ this.st={x,y,vx:0,vy:0,t}; out.push([x,y,this._pressure(x,y)]); return out; }  // long pause: restart here
+    for (let i=1;i<=n;i++){ const f=i/n; out.push(this._step(a[0]+(x-a[0])*f, a[1]+(y-a[1])*f, t0+(t-t0)*f)); }
+    return out;
+  }
+  _endOfStroke(ax,ay){                               // let the spring settle onto the last pen point
+    const init={...this.st}; let dt=1/INK.rate; const out=[];
+    for (let i=0;i<INK.maxIter;i++){
+      const prev={...this.st}, c=this._step(ax,ay,prev.t+dt);
+      if (Math.hypot(c[0]-prev.x,c[1]-prev.y) < INK.stopDist) break;
+      if (segRatio(prev.x,prev.y,c[0],c[1],ax,ay) < 1){ dt*=0.5; this.st=prev; continue; }   // would overshoot
+      out.push(c);
+      if (Math.hypot(c[0]-ax,c[1]-ay) < INK.stopDist) break;
+    }
+    this.st=init; return out;
+  }
+  down(x,y,p,t){ this.hist=[]; this._hist(x,y,p); this.last={x,y,p,t}; this.anchor=[x,y];
+    if (this.prm) this.st={x,y,vx:0,vy:0,t}; return [[x,y,p]]; }
+  move(x,y,p,t){
+    const L=this.last; if (t<L.t) t=L.t;
+    if (x===L.x && y===L.y && t===L.t) return [];
+    this._hist(x,y,p);
+    const out = this.prm ? this._follow(x,y,t) : [[x,y,p]];
+    this.last={x,y,p,t}; this.anchor=[x,y];
+    return out;
+  }
+  up(x,y,p,t){
+    if (!this.prm){ const L=this.last; return (x===L.x&&y===L.y) ? [] : (this._hist(x,y,p), [[x,y,p]]); }
+    if (t<this.last.t) t=this.last.t;
+    this._hist(x,y,p);
+    const out=this._follow(x,y,t); this.last={x,y,p,t}; this.anchor=[x,y];
+    return out.concat(this._endOfStroke(x,y));
+  }
+  predict(){ return (this.prm && this.st) ? this._endOfStroke(this.last.x, this.last.y) : []; }
+}
+// Width from pressure. A stylus thins and thickens gently (0.4x to 1.75x the size, 1x at half pressure);
+// mouse, touch and highlighter draw at a constant width.
+function inkWidth(obj,p){ return obj.cw ? obj.size : obj.size*Math.min(1.75, Math.max(0.15, 0.25+1.5*p)); }
+// One segment as a filled quad with round caps (cubic semicircles), exactly like Rnote's variable-width
+// composer. All capsules wind the same way, so a nonzero fill unions them into one clean line.
+function addCapsule(P, ax,ay,wa, bx,by,wb){
+  const dx=bx-ax, dy=by-ay, L=Math.hypot(dx,dy); if (L<1e-6) return false;
+  const ux=dx/L, uy=dy/L, nx=-uy, ny=ux, ha=wa/2, hb=wb/2, ca=wa*2/3, cb=wb*2/3;
+  const sPx=ax+nx*ha, sPy=ay+ny*ha, sNx=ax-nx*ha, sNy=ay-ny*ha;
+  const ePx=bx+nx*hb, ePy=by+ny*hb, eNx=bx-nx*hb, eNy=by-ny*hb;
+  P.moveTo(sNx,sNy);
+  P.bezierCurveTo(sNx-ux*ca, sNy-uy*ca, sPx-ux*ca, sPy-uy*ca, sPx, sPy);
+  P.lineTo(ePx,ePy);
+  P.bezierCurveTo(ePx+ux*cb, ePy+uy*cb, eNx+ux*cb, eNy+uy*cb, eNx, eNy);
+  P.closePath();
+  return true;
+}
+function inkPath(obj){
+  const P=new Path2D(), pts=obj.pts; if (!pts.length) return P;
+  let drew=false;
+  for (let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i];
+    if (addCapsule(P, a[0],a[1],inkWidth(obj,a[2]), b[0],b[1],inkWidth(obj,b[2]))) drew=true; }
+  if (!drew){ const a=pts[0]; P.moveTo(a[0]+inkWidth(obj,a[2])/2, a[1]); P.arc(a[0],a[1],inkWidth(obj,a[2])/2,0,Math.PI*2); }
+  return P;
+}
+// ---- live ink: input -> modeler -> points -> capsules on the current chunk ----
+function inkBox(L,x,y,w){ const b=L.box; if (!b){ L.box={x0:x-w,y0:y-w,x1:x+w,y1:y+w}; return; }
+  if (x-w<b.x0) b.x0=x-w; if (y-w<b.y0) b.y0=y-w; if (x+w>b.x1) b.x1=x+w; if (y+w>b.y1) b.y1=y+w; }
+function inkPush(q, force){
+  const L=action.ink, pts=live.pts, a=pts[pts.length-1];
+  if (a && !force && Math.hypot(q[0]-a[0],q[1]-a[1]) < INK.minSegPx/view.scale){ L.pending=q; return; }
+  L.pending=null; pts.push(q);
+  const wb=inkWidth(live,q[2]);
+  if (a && addCapsule(L.chunk, a[0],a[1],inkWidth(live,a[2]), q[0],q[1],wb)) L.chunkN++;
+  inkBox(L, q[0], q[1], wb);
+  if (!a){ L.dot=true; }
+  if (L.chunkN>=INK.bakeEvery && live.opacity>=1) inkBake();
+}
+function inkBake(){                                  // move the finished chunk onto the ink layer
+  const L=action.ink;
+  applyWorld(inkCtx); inkCtx.fillStyle=live.color; inkCtx.fill(L.chunk);
+  L.chunk=new Path2D(); L.chunkN=0;
+  const q=live.pts[live.pts.length-1], w=inkWidth(live,q[2]); L.box=null; inkBox(L,q[0],q[1],w);
+}
+function inkRebake(){                                // view changed mid-stroke: redraw everything so far
+  if (!live || live.eng!==3 || !action || !action.ink) return;
+  inkCtx.setTransform(1,0,0,1,0,0); inkCtx.clearRect(0,0,inkCv.width,inkCv.height);
+  const L=action.ink;
+  if (live.opacity>=1){ applyWorld(inkCtx); inkCtx.fillStyle=live.color; inkCtx.fill(inkPath(live)); L.chunk=new Path2D(); L.chunkN=0; }
+  else { L.chunk=inkPath(live); }
+  overlayDirty='full';
+  let b=null; for (const q of live.pts){ const w=inkWidth(live,q[2]); if(!b) b={x0:q[0]-w,y0:q[1]-w,x1:q[0]+w,y1:q[1]+w};
+    else { b.x0=Math.min(b.x0,q[0]-w); b.y0=Math.min(b.y0,q[1]-w); b.x1=Math.max(b.x1,q[0]+w); b.y1=Math.max(b.y1,q[1]+w); } }
+  L.box = live.opacity>=1 && live.pts.length ? (()=>{ const q=live.pts[live.pts.length-1], w=inkWidth(live,q[2]); return {x0:q[0]-w,y0:q[1]-w,x1:q[0]+w,y1:q[1]+w}; })() : b;
+}
+function inkInput(ev, kind){
+  const r=action.rect, x=(ev.clientX-r.left-view.tx)/view.scale, y=(ev.clientY-r.top-view.ty)/view.scale;
+  const L=action.ink;
+  let p=0.5;
+  if (!live.cw){ if (kind==='up') p=L.lastP; else { p = ev.pressure>0 ? ev.pressure : L.lastP; L.lastP=p; } }
+  const out=L.mod[kind](x, y, p, ev.timeStamp/1000);
+  for (const q of out) inkPush(q, false);
+  if (kind==='up'){ if (L.pending) inkPush(L.pending, true); L.dirtyTail=true; }
+}
+// called from paint(): newest chunk + the predicted catch-up to the pen tip, all in one fill
+function drawLiveInk(c){
+  const L=action && action.ink; if (!L) return;
+  const P=new Path2D(L.chunk), pts=live.pts, last=pts[pts.length-1];
+  if (L.chunkN===0 && last && live.pts.length===1){ const w=inkWidth(live,last[2])/2; P.moveTo(last[0]+w,last[1]); P.arc(last[0],last[1],w,0,Math.PI*2); }
+  let tb=null;
+  if (last && !L.ended){
+    const pr=L.mod.predict(); let a=last;
+    for (const q of pr){ if (addCapsule(P, a[0],a[1],inkWidth(live,a[2]), q[0],q[1],inkWidth(live,q[2]))){ a=q;
+      const w=inkWidth(live,q[2]); if(!tb) tb={x0:q[0]-w,y0:q[1]-w,x1:q[0]+w,y1:q[1]+w};
+      else { tb.x0=Math.min(tb.x0,q[0]-w); tb.y0=Math.min(tb.y0,q[1]-w); tb.x1=Math.max(tb.x1,q[0]+w); tb.y1=Math.max(tb.y1,q[1]+w); } } }
+  }
+  c.save(); c.globalAlpha = live.opacity!=null?live.opacity:1; c.fillStyle=live.color; c.fill(P); c.restore();
+  let b=L.box ? {...L.box} : null;
+  if (tb) b = b ? {x0:Math.min(b.x0,tb.x0),y0:Math.min(b.y0,tb.y0),x1:Math.max(b.x1,tb.x1),y1:Math.max(b.y1,tb.y1)} : tb;
+  return b;
+}
+
 // Bounding box (page-space) for any object
 function bbox(obj){
   if (obj.type==='pen' || obj.type==='highlight'){
-    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; const pad=obj.size/2+2;
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; const pad=(obj.eng===3 && !obj.cw ? obj.size*0.875 : obj.size/2)+2;
     for (const p of obj.pts){ x0=Math.min(x0,p[0]); y0=Math.min(y0,p[1]); x1=Math.max(x1,p[0]); y1=Math.max(y1,p[1]); }
     return {x0:x0-pad,y0:y0-pad,x1:x1+pad,y1:y1+pad};
   }
@@ -706,8 +876,8 @@ function measureText(obj){
 function resizeCanvas(){
   dpr = window.devicePixelRatio || 1;
   cssW = wrap.clientWidth; cssH = wrap.clientHeight;
-  for (const c of [canvas, staticCv]){ c.width = Math.round(cssW*dpr); c.height = Math.round(cssH*dpr); }
-  for (const c of [canvas, staticCv]){ c.style.width = cssW+'px'; c.style.height = cssH+'px'; }
+  for (const c of [canvas, staticCv, inkCv]){ c.width = Math.round(cssW*dpr); c.height = Math.round(cssH*dpr); }
+  for (const c of [canvas, staticCv, inkCv]){ c.style.width = cssW+'px'; c.style.height = cssH+'px'; }
   overlayDirty = null; staticDirty = true; requestPaint();
 }
 function applyWorld(c){ c.setTransform(view.scale*dpr,0,0,view.scale*dpr, view.tx*dpr, view.ty*dpr); }
@@ -787,12 +957,14 @@ function renderStatic(){
   applyWorld(staticCtx);
   drawPageBackground(staticCtx);
   for (const obj of page().objects) drawObject(staticCtx, obj);
+  if (page().objects.length) $('canvasEmpty').style.display='none';
   staticDirty = false;
 }
 function paint(){
   paintQueued = false;
   const t0 = perf.on && live ? performance.now() : 0;
-  if (staticDirty) renderStatic();
+  if (staticDirty){ renderStatic(); if (live && live.eng===3) inkRebake(); }
+  if (inkNeedsClear && !live){ inkCtx.setTransform(1,0,0,1,0,0); inkCtx.clearRect(0,0,inkCv.width,inkCv.height); inkNeedsClear=false; }
   const needsFull = selection.length || selBox || (lassoPts && lassoPts.length);
   ctx.setTransform(1,0,0,1,0,0);
   if (overlayDirty==='full') ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -800,7 +972,12 @@ function paint(){
   overlayDirty = null;
   applyWorld(ctx);
   // live drawing (only its own area is cleared/redrawn next frame)
-  if (live){
+  if (live && live.eng===3){
+    const b=drawLiveInk(ctx);
+    if (!needsFull && b){ const s=view.scale*dpr, pad=4*s+4;
+      overlayDirty={ x:Math.floor(b.x0*s+view.tx*dpr-pad), y:Math.floor(b.y0*s+view.ty*dpr-pad),
+                     w:Math.ceil((b.x1-b.x0)*s+2*pad), h:Math.ceil((b.y1-b.y0)*s+2*pad) }; }
+  } else if (live){
     drawObject(ctx, live, true);
     if (!needsFull){ const b=bbox(live), s=view.scale*dpr, pad=((live.size||4)*1.2+4)*s+4;
       overlayDirty={ x:Math.floor(b.x0*s+view.tx*dpr-pad), y:Math.floor(b.y0*s+view.ty*dpr-pad),
@@ -850,11 +1027,19 @@ canvas.addEventListener('pointerdown', e=>{
 
   if (tool==='pen' || tool==='highlight'){
     const isHl = tool==='highlight';
+    if (penStyle==='ink'){
+      live = { id:nextId(), type: isHl?'highlight':'pen', pts: [], eng: 3, cw: isHl || e.pointerType!=='pen',
+               color: penColor, size: isHl ? penSize*4 : penSize, opacity: isHl ? HL_PALETTE.default : 1 };
+      action = {kind:'draw', model:{isPen:e.pointerType==='pen'}, rect:canvas.getBoundingClientRect(), start:performance.now(),
+                ink:{ mod:new InkModeler(inkParams()), chunk:new Path2D(), chunkN:0, box:null, pending:null, lastP:0.5, ended:false }};
+      inkInput(e,'down'); paint();
+    } else {
     live = { id:nextId(), type: isHl?'highlight':'pen', pts: [], eng: 2, sm: MODEL.smoothPx/view.scale,
              color: penColor, size: isHl ? penSize*4 : penSize,
              opacity: isHl ? HL_PALETTE.default : 1 };
     action = {kind:'draw', model:new StrokeModeler(e.pointerType==='pen'), rect:canvas.getBoundingClientRect(), start:performance.now()};
     modelPoint(e);
+    }
   } else if (tool==='erase'){
     pushHistory(); action={kind:'erase'}; eraseAt(x,y);
   } else if (tool==='shape'){
@@ -889,7 +1074,12 @@ canvas.addEventListener('pointermove', e=>{
   if (action && action.kind==='pan'){ doPan(e); return; }
   if (!action) { updateCursor(e); return; }
   const {x,y} = screenToPage(e.clientX, e.clientY);
-  if (action.kind==='draw'){
+  if (action.kind==='draw' && action.ink){
+    if (HAS_RAW) return;                               // handled earlier by pointerrawupdate
+    const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+    for (const ev of evs) inkInput(ev,'move');
+    paint();                                           // draw now, don't wait for the next frame
+  } else if (action.kind==='draw'){
     // Capture every sub-frame point a high-rate stylus reports, not just one per move event
     const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
     for (const ev of evs) modelPoint(ev);
@@ -911,8 +1101,20 @@ canvas.addEventListener('pointermove', e=>{
     if (dx||dy){ action.moved=true; moveSelection(dx,dy); staticDirty=true; requestPaint(); }
   }
 });
+// pointerrawupdate delivers pen samples as soon as they arrive instead of once per frame (Chromium)
+const HAS_RAW = 'onpointerrawupdate' in window;
+if (HAS_RAW) canvas.addEventListener('pointerrawupdate', e=>{
+  if (!action || action.kind!=='draw' || !action.ink) return;
+  const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+  for (const ev of evs) inkInput(ev,'move');
+  paint();
+});
 function endAction(e){
   if (!action) return;
+  if (action.kind==='draw' && action.ink && live){
+    if (e && e.type==='pointerup') inkInput(e,'up'); else if (action.ink.pending) inkPush(action.ink.pending, true);
+    action.ink.ended=true; inkNeedsClear=true;
+  }
   if (action.kind==='draw' && live){
     // committed strokes render with perfect-freehand's `last` flag for a clean end cap
     if (perf.on && perf.strokes < 6 && live.pts.length > 5){
@@ -921,7 +1123,7 @@ function endAction(e){
       console.warn('[perf] stroke '+perf.strokes+': '+live.type+(action.model.isPen?' (stylus)':' (mouse/touch)')+
         ', '+live.pts.length+' points in '+dur.toFixed(2)+' s = '+Math.round(live.pts.length/Math.max(dur,0.001))+' pts/s'+
         ', '+perf.frames+' frames, paint avg '+(perf.ms/Math.max(1,perf.frames)).toFixed(1)+' ms, max '+perf.max.toFixed(1)+' ms'+
-        ', dpr '+dpr+', canvas '+canvas.width+'x'+canvas.height+', smooth '+MODEL.smoothPx);
+        ', dpr '+dpr+', canvas '+canvas.width+'x'+canvas.height+', smooth '+MODEL.smoothPx+', pen '+penStyle+(HAS_RAW?' (raw input)':''));
     }
     perf.frames=0; perf.ms=0; perf.max=0;
     pushHistory(); page().objects.push(live); live=null; staticDirty=true;
@@ -1614,6 +1816,8 @@ async function loadWebsite(rawUrl, opts={}){
   }
 }
 // Stroke smoothing (stabilizer) selector — applies to new strokes
+$('penStyleSel').value=penStyle;
+$('penStyleSel').addEventListener('change', e=>{ penStyle=e.target.value; try{localStorage.setItem('marginalia:penStyle',penStyle);}catch(x){} toast(penStyle==='ink'?'Pen: Ink (precise, light)':'Pen: Brush (calligraphic)','ok'); e.target.blur(); });
 $('smoothSel').value=String(MODEL.smoothPx);
 if ($('smoothSel').value==='') $('smoothSel').value='3.5';
 $('smoothSel').addEventListener('change', e=>{ MODEL.smoothPx=parseFloat(e.target.value)||0; try{localStorage.setItem('marginalia:smooth',MODEL.smoothPx);}catch(x){} toast('Smoothing: '+e.target.selectedOptions[0].text.replace('Smooth: ',''),'ok'); e.target.blur(); });

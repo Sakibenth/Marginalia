@@ -7,7 +7,7 @@ next to a **pressure-sensitive notebook**, so you can take handwritten notes wit
 
 ## Download
 
-**Windows 10 / 11 (64-bit):** get `Marginalia-Setup-1.1.0.exe` from the
+**Windows 10 / 11 (64-bit):** get `Marginalia-Setup-1.2.0.exe` from the
 [latest release](../../releases/latest). No administrator rights are needed.
 See [the install guide](docs/INSTALL.md) for the Windows SmartScreen step and first-launch notes.
 
@@ -18,9 +18,11 @@ and open `http://localhost:8000/Marginalia.html`.
 
 ## Features
 
-- **Stroke engine** built on [perfect-freehand](https://github.com/steveruizok/perfect-freehand), with pen
-  pressure, velocity-based pressure for mice, Catmull-Rom resampling and zero-lag smoothing
-  (Smooth: Off / Low / Medium / High).
+- **Ink pen** modelled on [Rnote](https://github.com/flxzt/rnote)'s pen: a spring-mass stroke model
+  (Google's ink-stroke-modeler) with prediction to the pen tip, linear pressure-to-width and round-capped
+  segments. The line stays exactly where you wrote it (Smooth: Off / Low / Medium / High).
+  The older calligraphic **Brush** pen ([perfect-freehand](https://github.com/steveruizok/perfect-freehand))
+  is still available.
 - **Sources side by side:** PDFs (PDF.js), local video, YouTube, and websites in a clean Reader view
   (Mozilla Readability) or Live view.
 - **Tools:** pen, highlighter, eraser, lasso select, drag, shapes (lines, arrows, rectangles, circles,
